@@ -1,12 +1,40 @@
 ---
 title: "Dice Check"
 author: "Duane Stanton"
-date: "2024-08-31"
-output: html_document
+date: "`r format(Sys.Date(), '%d-%b-%Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: true
+      smooth_scroll: false
+    number_sections: true
+    highlight: tango
+    code_folding: hide
+    theme: united
 ---
 
-```{r setup}
-#|include: TRUE
+```{css, echo=FALSE}
+<style type="text/css">
+  
+  body{
+  font-size: 12pt;
+  background-color:lightblue;
+  }
+  
+  code.r{
+  font-size: 11pt;
+  }
+  
+  pre {
+  font-size: 14pt
+  
+}
+</style>
+```
+
+```{r setup, include=TRUE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
@@ -255,7 +283,7 @@ plot_result <- function(df, fill_color = "dodgerblue2") {
 
 
 set_fill_map <- 
-  c("white" = "ivory3", "grey" = "grey40", 
+  c("white" = "firebrick", "grey" = "grey40", 
     "black" = "grey10", "green" = "green4",
     "teal1" = "darkcyan", "teal2" = "steelblue4",
     "mushroom" = "gold3", "aubergine" = "#614051",
@@ -265,9 +293,7 @@ set_fill_map <-
 
 ### White Dice
 
-```{r white-d4}
-#|echo: FALSE
-#|eval: TRUE
+```{r white-d4, echo = FALSE, eval = TRUE}
 white_d4_df <- # want: 197 rolls
   data.frame(
     set = sets[1],
@@ -290,9 +316,7 @@ plot_result(white_d4_df, set_fill_map["white"])
 ```
 
 
-```{r white-d6}
-#|echo: FALSE
-#|eval: TRUE
+```{r white-d6, echo = FALSE, eval = TRUE}
 white_d6_df <- # want: 347 rolls
   data.frame(
     set = sets[1],
@@ -322,9 +346,7 @@ plot_result(white_d6_df, set_fill_map["white"])
 ```
 
 
-```{r white-d8}
-#|echo: FALSE
-#|eval: TRUE
+```{r white-d8, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[1] & dice_setup$die == dice[3], "sample_size"] / 25
 
@@ -366,9 +388,7 @@ plot_result(white_d8_df, set_fill_map["white"])
 ```
 
 
-```{r white-d10}
-#|echo: FALSE
-#|eval: TRUE
+```{r white-d10, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[1] & dice_setup$die == dice[4], "sample_size"] / 19
 
@@ -433,9 +453,7 @@ plot_result(white_d10_df, set_fill_map["white"])
 ```
 
 
-```{r white-dpct}
-#|echo: FALSE
-#|eval: TRUE
+```{r white-dpct, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[1] & dice_setup$die == dice[5], "sample_size"] / 25
 
@@ -490,9 +508,7 @@ plot_result(`white_d%_df`, set_fill_map["white"])
 ```
 
 
-```{r white-d12}
-#|echo: FALSE
-#|eval: TRUE
+```{r white-d12, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[1] & dice_setup$die == dice[6], "sample_size"] / 19
 
@@ -566,9 +582,7 @@ plot_result(white_d12_df, set_fill_map["white"])
 ```
 
 
-```{r white-d20}
-#|echo: FALSE
-#|eval: TRUE
+```{r white-d20, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[1] & dice_setup$die == dice[7], "sample_size"] / 19
 
@@ -704,9 +718,7 @@ plot_result(white_d20_df, set_fill_map["white"])
 
 ### Grey Dice
 
-```{r grey-d4}
-#|echo: FALSE
-#|eval: TRUE
+```{r grey-d4, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[2] & dice_setup$die == dice[1], "sample_size"] / 25
 
@@ -732,9 +744,7 @@ plot_result(grey_d4_df, set_fill_map["grey"])
 ```
 
 
-```{r grey-d6}
-#|echo: FALSE
-#|eval: TRUE
+```{r grey-d6, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[2] & dice_setup$die == dice[2], "sample_size"] / 25
 
@@ -767,9 +777,7 @@ plot_result(grey_d6_df, set_fill_map["grey"])
 ```
 
 
-```{r grey-d8}
-#|echo: FALSE
-#|eval: TRUE
+```{r grey-d8, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[2] & dice_setup$die == dice[3], "sample_size"] / 25
 
@@ -811,9 +819,7 @@ plot_result(grey_d8_df, set_fill_map["grey"])
 ```
 
 
-```{r grey-d10}
-#|echo: FALSE
-#|eval: TRUE
+```{r grey-d10, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[2] & dice_setup$die == dice[4], "sample_size"] / 25
 
@@ -866,9 +872,7 @@ plot_result(grey_d10_df, set_fill_map["grey"])
 ```
 
 
-```{r grey-dpct}
-#|echo: FALSE
-#|eval: TRUE
+```{r grey-dpct, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[2] & dice_setup$die == dice[5], "sample_size"] / 19
 
@@ -920,9 +924,7 @@ plot_result(`grey_d%_df`, set_fill_map["grey"])
 ```
 
 
-```{r grey-d12}
-#|echo: FALSE
-#|eval: TRUE
+```{r grey-d12, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[2] & dice_setup$die == dice[6], "sample_size"] / 19
 
@@ -996,9 +998,7 @@ plot_result(grey_d12_df, set_fill_map["grey"])
 ```
 
 
-```{r grey-d20}
-#|echo: FALSE
-#|eval: TRUE
+```{r grey-d20, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[2] & dice_setup$die == dice[7], "sample_size"] / 19
 
@@ -1134,9 +1134,7 @@ plot_result(grey_d20_df, set_fill_map["grey"])
 
 ### Black Dice
 
-```{r black-d4}
-#|echo: FALSE
-#|eval: TRUE
+```{r black-d4, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[3] & dice_setup$die == dice[1], "sample_size"] / 25
 
@@ -1162,9 +1160,7 @@ plot_result(black_d4_df, set_fill_map["black"])
 ```
 
 
-```{r black-d6}
-#|echo: FALSE
-#|eval: TRUE
+```{r black-d6, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[3] & dice_setup$die == dice[2], "sample_size"] / 25
 
@@ -1197,9 +1193,7 @@ plot_result(black_d6_df, set_fill_map["black"])
 ```
 
 
-```{r black-d8}
-#|echo: FALSE
-#|eval: TRUE
+```{r black-d8, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[3] & dice_setup$die == dice[3], "sample_size"] / 25
 
@@ -1241,9 +1235,7 @@ plot_result(black_d8_df, set_fill_map["black"])
 ```
 
 
-```{r black-d10}
-#|echo: FALSE
-#|eval: TRUE
+```{r black-d10, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[3] & dice_setup$die == dice[4], "sample_size"] / 25
 
@@ -1296,9 +1288,7 @@ plot_result(black_d10_df, set_fill_map["black"])
 ```
 
 
-```{r black-dpct}
-#|echo: FALSE
-#|eval: TRUE
+```{r black-dpct, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[3] & dice_setup$die == dice[5], "sample_size"] / 25
 
@@ -1350,9 +1340,7 @@ plot_result(`black_d%_df`, set_fill_map["black"])
 ```
 
 
-```{r black-d12}
-#|echo: FALSE
-#|eval: TRUE
+```{r black-d12, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[3] & dice_setup$die == dice[6], "sample_size"] / 19
 
@@ -1426,9 +1414,7 @@ plot_result(black_d12_df, set_fill_map["black"])
 ```
 
 
-```{r black-d20}
-#|echo: FALSE
-#|eval: TRUE
+```{r black-d20, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[3] & dice_setup$die == dice[7], "sample_size"] / 19
 
@@ -1563,9 +1549,7 @@ plot_result(black_d20_df, set_fill_map["black"])
 
 ### Green Dice
 
-```{r green-d4}
-#|echo: FALSE
-#|eval: TRUE
+```{r green-d4, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[4] & dice_setup$die == dice[1], "sample_size"] / 25
 
@@ -1591,9 +1575,7 @@ plot_result(green_d4_df, set_fill_map["green"])
 ```
 
 
-```{r green-d6}
-#|echo: FALSE
-#|eval: TRUE
+```{r green-d6, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[4] & dice_setup$die == dice[2], "sample_size"] / 25
 
@@ -1626,9 +1608,7 @@ plot_result(green_d6_df, set_fill_map["green"])
 ```
 
 
-```{r green-d8}
-#|echo: FALSE
-#|eval: TRUE
+```{r green-d8, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[4] & dice_setup$die == dice[3], "sample_size"] / 25
 
@@ -1670,9 +1650,7 @@ plot_result(green_d8_df, set_fill_map["green"])
 ```
 
 
-```{r green-d10}
-#|echo: FALSE
-#|eval: TRUE
+```{r green-d10, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[4] & dice_setup$die == dice[4], "sample_size"] / 25
 
@@ -1725,9 +1703,7 @@ plot_result(green_d10_df, set_fill_map["green"])
 ```
 
 
-```{r green-dpct}
-#|echo: FALSE
-#|eval: TRUE
+```{r green-dpct, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[4] & dice_setup$die == dice[5], "sample_size"] / 25
 
@@ -1779,9 +1755,7 @@ plot_result(`green_d%_df`, set_fill_map["green"])
 ```
 
 
-```{r green-d12}
-#|echo: FALSE
-#|eval: TRUE
+```{r green-d12, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[4] & dice_setup$die == dice[6], "sample_size"] / 19
 
@@ -1855,9 +1829,7 @@ plot_result(green_d12_df, set_fill_map["green"])
 ```
 
 
-```{r green-d20}
-#|echo: FALSE
-#|eval: TRUE
+```{r green-d20, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[4] & dice_setup$die == dice[7], "sample_size"] / 19
 
@@ -1993,9 +1965,7 @@ plot_result(green_d20_df, set_fill_map["green"])
 
 ### Individual d20s
 
-```{r teal1-d20}
-#|echo: FALSE
-#|eval: TRUE
+```{r teal1-d20, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[5] & dice_setup$die == dice[7], "sample_size"] / 19
 
@@ -2129,9 +2099,7 @@ plot_result(teal1_d20_df, set_fill_map["teal1"])
 ```
 
 
-```{r teal2-d20}
-#|echo: FALSE
-#|eval: TRUE
+```{r teal2-d20, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[6] & dice_setup$die == dice[7], "sample_size"] / 19
 
@@ -2265,9 +2233,7 @@ plot_result(teal2_d20_df, set_fill_map["teal2"])
 ```
 
 
-```{r mushroom-d20}
-#|echo: FALSE
-#|eval: TRUE
+```{r mushroom-d20, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[7] & dice_setup$die == dice[7], "sample_size"] / 19
 
@@ -2403,9 +2369,7 @@ plot_result(mushroom_d20_df, set_fill_map["mushroom"])
 
 ### Aubergine Dice
 
-```{r aub-d4}
-#|echo: FALSE
-#|eval: TRUE
+```{r aub-d4, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[8] & dice_setup$die == dice[1], "sample_size"] / 25
 
@@ -2431,9 +2395,7 @@ plot_result(aub_d4_df, set_fill_map["aubergine"])
 ```
 
 
-```{r aub-d6}
-#|echo: FALSE
-#|eval: TRUE
+```{r aub-d6, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[8] & dice_setup$die == dice[2], "sample_size"] / 25
 
@@ -2466,9 +2428,7 @@ plot_result(aub_d6_df, set_fill_map["aubergine"])
 ```
 
 
-```{r aub-d8}
-#|echo: FALSE
-#|eval: TRUE
+```{r aub-d8, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[8] & dice_setup$die == dice[3], "sample_size"] / 25
 
@@ -2510,9 +2470,7 @@ plot_result(aub_d8_df, set_fill_map["aubergine"])
 ```
 
 
-```{r aub-d10}
-#|echo: FALSE
-#|eval: TRUE
+```{r aub-d10, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[8] & dice_setup$die == dice[4], "sample_size"] / 25
 
@@ -2565,9 +2523,7 @@ plot_result(aub_d10_df, set_fill_map["aubergine"])
 ```
 
 
-```{r aub-dpct}
-#|echo: FALSE
-#|eval: TRUE
+```{r aub-dpct, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[8] & dice_setup$die == dice[5], "sample_size"] / 25
 
@@ -2619,9 +2575,7 @@ plot_result(`aub_d%_df`, set_fill_map["aubergine"])
 ```
 
 
-```{r aub-d12}
-#|echo: FALSE
-#|eval: TRUE
+```{r aub-d12, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[8] & dice_setup$die == dice[6], "sample_size"] / 19
 
@@ -2695,9 +2649,7 @@ plot_result(aub_d12_df, set_fill_map["aubergine"])
 ```
 
 
-```{r aub-d20}
-#|echo: FALSE
-#|eval: TRUE
+```{r aub-d20, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[8] & dice_setup$die == dice[7], "sample_size"] / 19
 
@@ -2833,9 +2785,7 @@ plot_result(aub_d20_df, set_fill_map["aubergine"])
 
 ### Ocean Dice
 
-```{r ocn-d4}
-#|echo: FALSE
-#|eval: TRUE
+```{r ocn-d4, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[9] & dice_setup$die == dice[1], "sample_size"] / 25
 
@@ -2861,9 +2811,7 @@ plot_result(ocn_d4_df, set_fill_map["ocean"])
 ```
 
 
-```{r ocn-d6}
-#|echo: FALSE
-#|eval: TRUE
+```{r ocn-d6, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[9] & dice_setup$die == dice[2], "sample_size"] / 25
 
@@ -2896,9 +2844,7 @@ plot_result(ocn_d6_df, set_fill_map["ocean"])
 ```
 
 
-```{r ocn-d8}
-#|echo: FALSE
-#|eval: TRUE
+```{r ocn-d8, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[9] & dice_setup$die == dice[3], "sample_size"] / 25
 
@@ -2940,9 +2886,7 @@ plot_result(ocn_d8_df, set_fill_map["ocean"])
 ```
 
 
-```{r ocn-d10}
-#|echo: FALSE
-#|eval: TRUE
+```{r ocn-d10, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[9] & dice_setup$die == dice[4], "sample_size"] / 25
 
@@ -2995,9 +2939,7 @@ plot_result(ocn_d10_df, set_fill_map["ocean"])
 ```
 
 
-```{r ocn-dpct}
-#|echo: FALSE
-#|eval: TRUE
+```{r ocn-dpct, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[9] & dice_setup$die == dice[5], "sample_size"] / 25
 
@@ -3050,9 +2992,7 @@ plot_result(`ocn_d%_df`, set_fill_map["ocean"])
 ```
 
 
-```{r ocn-d12}
-#|echo: FALSE
-#|eval: TRUE
+```{r ocn-d12, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[9] & dice_setup$die == dice[6], "sample_size"] / 19
 
@@ -3126,9 +3066,7 @@ plot_result(ocn_d12_df, set_fill_map["ocean"])
 ```
 
 
-```{r ocn-d20}
-#|echo: FALSE
-#|eval: TRUE
+```{r ocn-d20, echo = FALSE, eval = TRUE}
 # rows of 19 single-digit results to enter
 #dice_setup[dice_setup$set == sets[9] & dice_setup$die == dice[7], "sample_size"] / 19
 
@@ -3265,9 +3203,7 @@ plot_result(ocn_d20_df, set_fill_map["ocean"])
 
 
 
-```{r simulation-dp}
-#|echo: FALSE
-#|eval: TRUE
+```{r simulation-dp, echo = FALSE, eval = TRUE}
 # merging the datasets
 dice_roll_data <- 
   do.call(rbind,
@@ -3287,13 +3223,13 @@ dice_roll_data <-
                ))
 
 write.csv(x = dice_roll_data, row.names = FALSE,
-          file = "C:/Users/Duane/Documents/R/Projects/dice_rolls.csv")
+          file = "dice_rolls.csv")
 ```
 
 ```{r simulation-analysis-1}
 # loading the above dice-roll data
 dice_roll_df <- 
-  read.csv(file = "C:/Users/Duane/Documents/R/Projects/dice_rolls.csv")
+  read.csv(file = "dice_rolls.csv")
 
 # function to identify streaks in the data
 find_run_lengths <- function(x, streaks.only = TRUE){
@@ -3516,10 +3452,7 @@ lapply(seq_along(dice_streak_focus), function(i){
 streak_sim_plot
 ```
 
-```{r comparison-stat-sig}
-#|fig.width: 10 
-#|fig.height: 4
-
+```{r comparison-stat-sig, fig.width=10, fig.height=4}
 # plots of (Chi square HoV) stat-sig dice - side-by-side for same-die sets
 comparison_plots_df <- 
   dice_roll_df_ %>%
@@ -3562,9 +3495,7 @@ comparison_plots <-
 comparison_plots
 ```
 
-```{r d20-chisq-sim}
-#|eval: FALSE
-
+```{r d20-chisq-sim, eval = FALSE}
 # simulating p-values from subsampling observed rolls - checking if
 #  stat. sig. p-vals are more a result of large sample size
 boot_chisq_pval <- 
@@ -3664,13 +3595,13 @@ d20_sample_sim_df <-
                 d20_sample_sim_n1000_df)) 
 
 write.csv(x = d20_sample_sim_df,
-          file = "C:/Users/Duane/Documents/R/Projects/d20_sample_sim.csv", 
+          file = "d20_sample_sim.csv", 
           row.names = FALSE)
 ```
 
 ```{r d20-chisq-sim-viz}
 d20_sample_sim_df <- 
-  read.csv("C:/Users/Duane/Documents/R/Projects/d20_sample_sim.csv")
+  read.csv("d20_sample_sim.csv")
 
 set_d20_ranks <- 
   d20_sample_sim_df |> 
@@ -3707,10 +3638,7 @@ d20_sample_sim_df |>
 ```
 
 
-```{r bayesian-multinomial-proportions}
-#|fig.width: 9 
-#|fig.height: 8
-
+```{r bayesian-multinomial-proportions, fig.width = 9, fig.height = 8}
 # brms note for Dirichlet model:
 #https://discourse.mc-stan.org/t/dirichlet-regresion-using-brms/8591
 
@@ -3743,6 +3671,13 @@ d20_bayesian_pcts_df <-
     })
   )
 
+d20_bayesian_pcts_df <- 
+  lapply(1:nrow(d20_bayesian_pcts_df), function(i) {
+    d20_bayesian_pcts_df$thetas_df[[i]]
+    }) %>% 
+  bind_rows() %>% 
+  mutate(side = factor(side, levels = as.character(1:20)))
+
 d20_bayesian_pcts_df$iter <- 
   rep(
     rep(1:(nrow(d20_bayesian_pcts_df) / 
@@ -3750,14 +3685,7 @@ d20_bayesian_pcts_df$iter <-
       each = 20),
     times = length(unique(d20_bayesian_pcts_df$set))
   )
-
- d20_bayesian_pcts_df <- 
-   lapply(1:nrow(d20_bayesian_pcts_df), function(i) {
-     d20_bayesian_pcts_df$thetas_df[[i]]
-   }) %>% 
-   bind_rows() %>% 
-   mutate(side = factor(side, levels = as.character(1:20)))
-
+ 
 set_lntyp_map <- 
   c("white" = "solid", "grey" = "solid", 
     "black" = "solid", "green" = "solid",
@@ -3781,9 +3709,7 @@ d20_bayesian_pcts_plot <-
 d20_bayesian_pcts_plot
 ```
 
-```{r bayesian-multinomial-credint}
-#|fig.height: 8
-
+```{r bayesian-multinomial-credint, fig.height = 8}
 d20_bayesian_credint_df <- 
   d20_bayesian_pcts_df |> 
   group_by(set, side) |> 
