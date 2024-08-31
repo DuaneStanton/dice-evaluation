@@ -1,0 +1,3895 @@
+---
+title: "Dice Check"
+author: "Duane Stanton"
+date: "2024-08-31"
+output: html_document
+---
+
+```{r setup}
+#|include: TRUE
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r pkg-load}
+pkgs <- c("pwr", "dplyr", "ggplot2", "tidyr")
+for (i in seq_along(pkgs)) {library(pkgs[i], character.only = TRUE)}
+```
+
+```{r dnd-stats-sim}
+# DnD character generation option: roll 4d6, take the top 3
+# simulating to check distribution of that approach
+
+roll <- function(counts, sides, seed = NULL, drop.lowest = FALSE, lowest.n = 1) {
+  if (length(counts) != length(sides)) {stop("counts and sides lengths don't match")}
+  if (!all(sides %in% c(4, 6, 8, 10, 100, 12, 20))) {
+    stop("sides can only contain 4, 6, 8, 10, 100 (%), 12, 20")}
+  set.seed(seed)
+  pct_idx <- sides == 100
+  
+  roll_set <- 
+    lapply(1:length(sides), function(i) {
+      if (pct_idx[i]) {
+        ones <- sample(0:9, size = counts[i], replace = TRUE)
+        tens <- sample(0:9 * 10, size = counts[i], replace = TRUE)
+        rslt <- tens + ones
+        rslt[rslt == 0] <- 100
+        
+        if (drop.lowest) {rslt <- (rslt[order(rslt)])[-c(1:lowest.n)]}
+        rslt <- list(rslt)
+        names(rslt) <- paste0(counts[i], "d%")
+        rslt
+      } else {
+        rslt <- sample(1:sides[i], size = counts[i], replace = TRUE)
+        if (drop.lowest) {rslt <- (rslt[order(rslt)])[-c(1:lowest.n)]}
+        rslt <- list(rslt)
+        names(rslt) <- paste0(counts[i], "d", sides[i])
+        rslt
+        }
+      })
+  
+  roll_set[[length(roll_set) + 1]] <- c("total" = sum(unlist(roll_set)))
+  
+  roll_set
+}
+
+#x <- 
+data.frame(setup = c("3d4 - 2 vs. 1d10"),
+           sim_seed = 1:1e4) %>% 
+  mutate(
+    results = lapply(1:nrow(.), function(i){
+      roll(counts = c(3, 1), sides = c(4, 10), seed = .$sim_seed[i])
+    })
+  ) %>% 
+  mutate(
+    res_3d4mns2 = vapply(1:nrow(.), function(i) {
+      sum(.$results[[i]][[1]]$`3d4`) - 2}, numeric(1L)),
+    res_1d10 = vapply(1:nrow(.), function(i) {
+      .$results[[i]][[2]]$`1d10`}, numeric(1L)),
+  ) %>% 
+  pivot_longer(cols = starts_with("res_"),
+               names_to = "roll", names_prefix = "res_",
+               values_to = "result") %>% 
+  ggplot(aes(x = result, color = roll)) +
+  geom_density()
+
+# set.seed(42)
+# sim_set <- vector("integer", 1e5)
+# for (i in seq_along(sim_set)) {
+#   sim_set[i] <- 
+#     `[[`(
+#       unlist(
+#         roll(counts = 4, sides = 6, seed = i, drop.lowest = TRUE, lowest.n = 1), 
+#         recursive = FALSE), 
+#       "total")
+# }
+# 
+# hist(sim_set)
+# summary(sim_set) 
+# 
+# data.frame(result = c("< 7", "7-8", "9-10", "11-12", "13-14", 15:18)) %>% 
+#   mutate(
+#     prob = vapply(1:nrow(.), 
+#                   function(i) {
+#                     100 * 
+#                     if (result[i] == "< 7") {mean(sim_set < 7)
+#                     } else if (result[i] == "7-8") {mean(sim_set %in% 7:8)
+#                     } else if (result[i] == "9-10") {mean(sim_set %in% 9:10)
+#                     } else if (result[i] == "11-12") {mean(sim_set %in% 11:12)
+#                     } else if (result[i] == "13-14") {mean(sim_set %in% 13:14)
+#                     } else {mean(sim_set == as.numeric(result[i]))}
+#                   }, numeric(1L)),
+#     cumulative_prob = cumsum(prob),
+#     prob = sprintf("%.1f", prob)
+#     )
+
+```
+
+
+# Analysis Plan
+
+- Chi-square Goodness of Fit (GoF) Test
+
+- Bayesian multinomial modeling
+
+# Dice set notes
+
+- 'white': Chessex 'speckled arctic camo' 7-die set (CHX 25311); mostly white with grey flecks and black numbering, giving it a 'granite' appearance  
+    - urea  
+
+- 'grey': Chessex 'speckled granite' 7-die set (CHX 25320); white 'core' composition with extensive darker grey flecks and some lighter grey flecks, and 'blood-red' numbering  
+    - urea  
+    - _retired from use due to the mottled grey/dark red color scheme being hard to read unless under very bright light; re-inking didn't help_  
+
+- 'black': Chessex 'speckled urban camo' 7-die set (CHX 25328); dark grey 'core' composition with extensive black flecks and yellow numbering  
+    - urea  
+
+- 'green': FanRoll 'recycled rainbow' 7-die set; white 'core' composition with various-colored flecks throughout and green numbering
+    - resin  
+
+- 'teal1' and 'teal2': Gravity Dice individual d20s; teal with silver numbering (same coloring for each; unfortunately before rolling I did not note this, but one has the 15 at the bottom of its facet 'triangle' - otherwise they appear identical) 
+    - 6061 aluminum  
+
+- 'mushroom': [Etsy-gifted] individual d20; clear with embedded moss, lavender, and a small mushroom and gold numbering    
+    - resin
+    
+- 'aubergine': Die Hard Dice 'Rerolls' recycled plastic 7-die set; dark purple (d8 and d20 are closer to 'plum', being lighter) with embedded glitter and white numbering
+    - acrylic
+    
+- 'ocean': TheWizardsVault ocean opal 7-die set; translucent cyan with foil inclusion
+    - resin
+
+# Rolling Surface  
+
+- Most rolls (white, grey, black, most green rolls):  FanRoll velvet dice tray with leather backing ('rainbow watercolor'); 10" x 10" dimensions, moderate padding  
+
+- Later rolls (rest of green, teal[1/2], mushroom, aubergine, ocean rolls): GameGenic Tokens' Lair magnetic dice tray; 6.5" x 3.75" dimensions, slight padding
+
+# Power Analysis to Determine Sample Size to Vet Dice
+
+```{r pwr-analysis}
+sets <- c("white", "grey", "black", "green", "teal1", "teal2", "mushroom", "aubergine", "ocean")
+dice <- paste0("d", c(4, 6, 8, 10, "%", 12, 20))
+alpha <- 0.05 # P(reject null[fair die] | actually fair die)
+pwr <- 0.80 # P(don't reject null | alt [stated bias exists] is true)
+
+side_levels <- c(0:20, seq(30, 90, by = 10))
+
+# null hypothesis: equal probability for each side
+# alternative hypothesis: one side is 'preferred' (100 * alt_pref)% more
+#  (by dice structure, that means opposite side dice is 'disliked' by same %)
+#  (I'm assuming this holds true for d4 too)
+alt_pref <- 0.33333
+
+dice_setup <- 
+  data.frame(
+    set = rep(sets, each = length(dice)),
+    die = rep(dice, times = length(sets))
+    ) %>% 
+  # only d20 for teal1/teal2/mushroom 'set's
+  filter(!((grepl("teal", set) | grepl("mushroom", set)) & 
+           die %in% paste0("d", c(4, 6, 8, 10, "%", 12)))) %>% 
+  mutate(
+    sides = if_else(
+      grepl("\\%", die), 10,
+      sub("d", "", die) %>% as.numeric()
+    ),
+  ) %>% 
+  # note: need separate mutate() calls when the previous mutate-created 
+  #       content is needed to create subsequent multi-step entry 
+  mutate(
+    null = lapply(1:nrow(.), function(i) {
+      rep(1 / .$sides[i], times = .$sides[i])
+    }),
+    alt = lapply(1:nrow(.), function(i) {
+      eq_prob <- 1 / .$sides[i]
+      prefr <- (1 + alt_pref) * eq_prob
+      dislk <- (1 - alt_pref) * eq_prob
+      rest <- (1 - (prefr + dislk)) / (.$sides[i] - 2)
+      
+      c(prefr, dislk, rep(rest, .$sides[i] - 2))
+    })
+  ) %>% 
+  mutate(
+    effect_size = vapply(1:nrow(.), function(i) {
+      ES.w1(P0 = .$null[[i]], P1 = .$alt[[i]])
+    }, numeric(1L))
+  ) %>% 
+  mutate(
+    sample_size = vapply(1:nrow(.), function(i) {
+      N_ <- 
+      pwr.chisq.test(w = .$effect_size[i], 
+                     N = NULL,
+                     df = .$sides[i] - 1, 
+                     sig.level = alpha,
+                     power = pwr)$N
+      
+     ceiling(N_) # round up
+    }, numeric(1L))
+  )
+```
+
+# Checking Dice
+
+## Data Collection
+
+Notes on data collection:
+
+- Rolls must land in the dice tray; any roll outside it will be rejected (this includes rolls hitting the edge of the dice tray and landing outside the tray, rolls landing on the dice tray but then bouncing out, and rolls landing outside the dice tray but then bouncing in; rolls hitting the dice tray side but no other object and landing inside the tray will be included)    
+
+- Rolls must be spun in the air; any roll (subjectively) deemed to have been insufficiently 'spun' will be rejected (i.e. it felt like I basically just dropped the dice instead of spinning it in the air)   
+
+- Dice are rolled one at a time; each result is recorded before picking up the die to conduct the next roll   
+
+- If the die doesn't come to rest fully on one face (i.e. one edge of the die is resting against the side of the dice tray), the die must be (subjectively) deemed completely unambiguous as to which side _would be_ facing up if the tray side were not there for the roll to be recorded
+
+- If the die is rotated while picking it up and before the roll result is noted, the die should be rolled twice without recording the results before resuming recording of roll results (to potentially reduce the risk of bias in the recorded result, should one roll have an association with the prior one)  
+
+- The roll technique is described below:    
++ The die starts sitting upright in the open right hand, only slightly cupped with the die generally resting around the base of the middle and ring fingers    
++ The roll is an upward and 'counterclockwise' (wrist rotates the pinky to the right) twist, allowing the die to roll from the hand; generally this means the die rolls off the pinky, or occasionally the ring finger      
++ After each roll is recorded, the die is simply picked up and re-rolled; no deliberate care is made to randomize or control the up-facing side of the die (generally it seems to differ from the previous roll's result due to the picking up action)  
+
+
+```{r plot-function}
+# quick plotting function
+plot_result <- function(df, fill_color = "dodgerblue2") {
+  set_die <- deparse(substitute(df)) # store df name as text
+  set_ <- sub("^([a-z]+)_d[0-9|%]{1,2}_df$", "\\1", set_die)
+  die_ <- sub("^[a-z]+_(d[0-9|%]{1,2})_df$", "\\1", set_die)
+  
+  avg_count <- (1 / length(unique(df$result))) * nrow(df)
+  
+  ggplot(df, aes(x = result)) +
+    geom_vline(xintercept = mean(df$result), linetype = "solid") +
+    geom_hline(yintercept = avg_count, linetype = "solid") +
+    geom_bar(fill = fill_color, color = "black") +
+    labs(title = paste("Plot of", set_, die_, "results"),
+         subtitle = paste("n = ", nrow(df)),
+         caption = paste0("Horizontal line indicates expected count (",
+                          sprintf("%.1f", avg_count), 
+                          "); Vertical line indicates mean value (",
+                          sprintf("%.1f", mean(df$result)),")")) +
+    scale_x_continuous(breaks = unique(df$result)) +
+    theme_bw()
+}
+
+
+set_fill_map <- 
+  c("white" = "firebrick", "grey" = "grey40", 
+    "black" = "grey10", "green" = "green4",
+    "teal1" = "darkcyan", "teal2" = "steelblue4",
+    "mushroom" = "gold3", "aubergine" = "#614051",
+    "ocean" = "cyan2") #"azure2" "plum1" "thistle"  # 'ice queen' color candidates
+```
+
+
+### White Dice
+
+```{r white-d4}
+#|echo: FALSE
+#|eval: TRUE
+white_d4_df <- # want: 197 rolls
+  data.frame(
+    set = sets[1],
+    die = dice[1],
+    result = c( # 25 per full row
+      4, 3, 3, 1, 3, 2, 3, 1, 4, 2, 3, 4, 4, 3, 2, 1, 1, 4, 3, 3, 3, 1, 1, 2, 1, 
+      1, 4, 3, 1, 3, 3, 4, 2, 4, 2, 3, 4, 4, 4, 2, 4, 1, 4, 4, 2, 1, 3, 3, 4, 2,
+      2, 1, 3, 2, 2, 3, 4, 2, 2, 2, 3, 4, 1, 1, 4, 1, 2, 4, 3, 3, 2, 2, 2, 1, 3,
+      1, 4, 4, 4, 3, 1, 1, 4, 2, 3, 3, 2, 3, 3, 3, 4, 3, 3, 2, 4, 2, 3, 4, 2, 3,
+      1, 1, 1, 2, 2, 4, 4, 2, 4, 2, 4, 2, 3, 1, 2, 3, 2, 3, 1, 4, 4, 2, 3, 1, 3,
+      
+      1, 4, 4, 3, 4, 4, 3, 1, 4, 4, 1, 2, 4, 2, 3, 4, 2, 4, 4, 4, 4, 2, 1, 4, 2,
+      4, 2, 3, 2, 1, 3, 1, 3, 3, 1, 4, 4, 3, 4, 1, 4, 2, 3, 4, 1, 2, 1, 2, 3, 4,
+      2, 1, 3, 2, 1, 1, 3, 3, 2, 2, 1, 2, 3, 2, 1, 4, 3, 2, 3, 2, 1, 2
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(white_d4_df, set_fill_map["white"])
+```
+
+
+```{r white-d6}
+#|echo: FALSE
+#|eval: TRUE
+white_d6_df <- # want: 347 rolls
+  data.frame(
+    set = sets[1],
+    die = dice[2],
+    result = c( # 25 per full row
+      4, 6, 4, 5, 6, 2, 4, 2, 3, 1, 6, 4, 6, 5, 3, 6, 6, 4, 5, 1, 6, 4, 2, 5, 1,
+      5, 6, 4, 3, 4, 6, 4, 6, 2, 1, 3, 5, 3, 1, 5, 3, 4, 5, 2, 6, 6, 1, 2, 5, 3,
+      5, 3, 3, 6, 1, 6, 4, 3, 5, 1, 2, 4, 3, 1, 4, 1, 6, 3, 1, 1, 2, 5, 4, 2, 6, 
+      2, 2, 1, 5, 6, 2, 6, 2, 2, 3, 4, 1, 3, 6, 5, 5, 6, 4, 5, 4, 5, 5, 6, 1, 2,
+      6, 2, 5, 1, 6, 6, 5, 6, 6, 4, 3, 1, 4, 1, 6, 3, 2, 4, 2, 3, 5, 6, 5, 3, 6,
+      
+      4, 1, 4, 3, 1, 3, 2, 4, 6, 6, 2, 5, 2, 3, 5, 6, 2, 1, 1, 4, 1, 3, 1, 6, 4, 
+      3, 3, 6, 4, 2, 2, 6, 3, 6, 5, 6, 5, 1, 3, 3, 6, 6, 5, 3, 5, 2, 6, 5, 4, 2,
+      5, 3, 6, 5, 2, 3, 6, 1, 2, 2, 1, 4, 4, 6, 2, 6, 4, 3, 5, 5, 6, 5, 1, 3, 1,
+      3, 4, 4, 6, 2, 5, 4, 4, 1, 4, 5, 2, 5, 4, 6, 5, 4, 6, 5, 3, 6, 1, 1, 5, 3,
+      1, 4, 1, 4, 4, 6, 3, 5, 5, 6, 5, 4, 5, 6, 4, 1, 4, 5, 1, 5, 4, 3, 4, 1, 3,
+      
+      5, 4, 1, 3, 1, 5, 2, 5, 6, 1, 1, 6, 2, 3, 6, 1, 6, 2, 5, 6, 5, 4, 5, 5, 5,
+      6, 4, 6, 1, 6, 2, 4, 3, 6, 3, 6, 4, 4, 5, 2, 5, 2, 2, 1, 5, 2, 1, 6, 5, 6,
+      6, 2, 2, 6, 3, 3, 6, 2, 6, 3, 5, 4, 4, 2, 1, 5, 5, 5, 4, 6, 1, 4, 1, 6, 1,
+      1, 4, 2, 3, 6, 4, 6, 3, 4, 5, 6, 2, 4, 2, 4, 2, 6, 5, 2, 6, 1, 5
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(white_d6_df, set_fill_map["white"])
+```
+
+
+```{r white-d8}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[1] & dice_setup$die == dice[3], "sample_size"] / 25
+
+white_d8_df <- # want: 517 rolls
+  data.frame(
+    set = sets[1],
+    die = dice[3],
+    result = c( # 25 per full row
+      3, 7, 8, 4, 5, 2, 5, 5, 1, 3, 1, 6, 6, 8, 8, 8, 1, 6, 2, 6, 4, 2, 1, 7, 1,
+      2, 8, 2, 5, 2, 4, 2, 7, 8, 3, 6, 4, 8, 1, 4, 2, 7, 2, 5, 3, 6, 3, 8, 2, 8, 
+      3, 3, 7, 2, 6, 3, 1, 3, 7, 4, 3, 1, 5, 4, 8, 6, 7, 4, 4, 7, 5, 4, 4, 6, 6,
+      3, 2, 8, 1, 2, 4, 2, 8, 5, 8, 1, 6, 2, 6, 7, 8, 3, 6, 6, 1, 8, 6, 3, 2, 2, 
+      8, 2, 3, 6, 6, 1, 7, 1, 5, 6, 2, 8, 3, 8, 3, 8, 7, 1, 4, 3, 3, 3, 7, 8, 8,
+      
+      1, 1, 7, 7, 3, 7, 5, 1, 2, 2, 4, 1, 7, 3, 4, 7, 8, 2, 6, 8, 1, 8, 2, 8, 4,
+      6, 6, 7, 1, 6, 6, 1, 4, 2, 1, 6, 8, 7, 6, 5, 8, 4, 2, 5, 4, 6, 6, 1, 7, 6,
+      2, 5, 4, 2, 4, 6, 5, 7, 8, 5, 7, 1, 5, 7, 2, 1, 2, 8, 7, 2, 3, 4, 8, 7, 5, 
+      3, 4, 2, 6, 5, 3, 3, 6, 7, 1, 4, 6, 4, 6, 4, 6, 5, 5, 1, 8, 7, 8, 1, 3, 7, 
+      2, 7, 6, 4, 4, 7, 2, 7, 7, 3, 3, 1, 5, 5, 7, 8, 1, 2, 1, 6, 2, 2, 4, 7, 6,
+      
+      8, 1, 5, 2, 8, 5, 4, 3, 1, 1, 3, 3, 1, 5, 4, 8, 4, 6, 4, 2, 6, 5, 5, 6, 7,
+      6, 2, 8, 7, 4, 4, 8, 4, 2, 5, 6, 3, 8, 4, 5, 8, 2, 8, 2, 1, 6, 7, 8, 5, 6,
+      2, 2, 4, 3, 5, 8, 8, 2, 1, 2, 6, 4, 2, 5, 4, 5, 5, 2, 4, 7, 2, 4, 3, 3, 2, 
+      2, 2, 7, 5, 3, 2, 2, 6, 5, 7, 8, 6, 7, 2, 8, 1, 4, 5, 7, 8, 4, 4, 7, 5, 3,
+      1, 8, 5, 2, 7, 2, 1, 7, 6, 7, 4, 6, 2, 5, 6, 1, 5, 7, 3, 2, 7, 1, 1, 3, 4,
+      
+      4, 7, 2, 5, 4, 8, 1, 5, 4, 2, 7, 8, 2, 2, 2, 7, 2, 7, 7, 4, 4, 3, 5, 8, 6, 
+      6, 3, 1, 2, 7, 8, 1, 2, 3, 8, 6, 8, 7, 6, 4, 2, 6, 2, 5, 7, 7, 5, 7, 2, 4,
+      7, 2, 3, 4, 5, 6, 7, 7, 3, 1, 4, 4, 7, 1, 6, 5, 8, 7, 6, 4, 1, 3, 5, 2, 8,
+      8, 5, 8, 1, 4, 5, 4, 1, 7, 2, 8, 1, 5, 5, 7, 4, 7, 1, 4, 1, 5, 4, 3, 7, 8, 
+      6, 4, 8, 2, 2, 5, 2, 8, 5, 2, 4, 7, 3, 4, 5, 2, 4, 7, 1, 5, 5, 3, 3, 4, 8,
+      
+      6, 3, 3, 1, 1, 4, 3, 8, 1, 4, 1, 3, 1, 4, 8, 4, 8
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(white_d8_df, set_fill_map["white"])
+```
+
+
+```{r white-d10}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[1] & dice_setup$die == dice[4], "sample_size"] / 19
+
+# note: I believe by convention the '0' on the d10 is read as '10'
+#       unless it's rolled in conjunction with the d%, in which case it's
+#       'truly' 0 - except for '0' and '00', which becomes '100'
+white_d10_df <- # want: 705 rolls
+  data.frame(
+    set = sets[1],
+    die = dice[4],
+    result = c( # 19 per full row
+      3,  1,  8,  9,  3,  3,  5,  9,  7,  8,  7,  6,  6,  8,  8,  2,  4,  9,  9, 
+      9,  9,  1,  3, 10,  9,  9,  8,  3,  6,  9,  9,  4, 10,  3,  9, 10,  7,  9,
+      9,  4,  1,  4,  7,  4,  9,  5,  2, 10,  9,  4,  9,  1,  9,  4,  7,  8,  5,
+      3,  4,  6, 10, 10,  7,  8,  7,  2,  4, 10,  1,  1,  9,  2,  3,  4,  6, 10,
+      1,  8,  5,  2,  9,  2,  6,  1,  1,  6,  5,  5,  9,  4, 10,  1,  7,  6, 10,
+      
+      9,  7,  6, 10,  7,  4,  8,  3, 10, 10,  9,  3,  1,  4,  8,  1,  2,  6,  5,
+      7,  4,  7,  1,  6,  9,  5,  9,  5,  3,  2,  8,  5,  3,  5,  3, 10,  6,  6,
+      5,  4,  7,  5,  9,  9,  4,  9,  2,  4, 10,  4,  6,  4,  4,  1,  9, 10,  9,
+      2,  5,  2,  1,  8,  8,  5,  5,  6,  4,  2,  2,  3,  8,  4,  9,  2,  2,  4,
+      1,  9,  4,  9,  4,  2,  2,  4,  8,  3,  6,  6,  6,  6,  1,  3,  4,  7,  9,
+      
+      3,  2,  8,  2, 10,  3, 10,  4, 10, 10,  4,  6,  6,  8,  2,  6,  4, 10, 10,
+      2,  3,  6, 10,  2,  6, 10,  1,  3,  1,  2,  3, 10,  5, 10,  7,  9,  6,  7,
+      9,  3,  8,  5,  4,  6,  9,  9, 10,  7,  8,  7,  5,  7,  9,  8,  1,  1,  6,
+      9,  1,  8,  8,  7,  8,  2,  9,  2, 10,  7,  3,  8,  4,  9,  6,  3,  7,  2,
+      4,  7,  9,  5,  3,  9,  5, 10,  2,  5,  4,  8,  4,  9, 10,  1,  2,  5,  1,
+      
+      5,  1,  3,  6,  2,  7,  6,  8,  7, 10,  4,  8,  1, 10,  1,  1,  8,  9,  8,
+      5,  5,  3,  3,  3,  4,  7,  2,  8,  7,  9,  6,  1,  5,  8,  5,  2,  3,  4,
+      2,  5,  1,  2,  1,  2,  1,  7,  6,  1,  6,  9,  6,  6, 10,  9,  4,  7,  5,
+      6,  3, 10,  1,  8,  6,  2,  6,  3,  9,  9,  9,  8,  5,  7,  3,  8,  5,  7,
+      2,  1,  1,  5,  4,  3,  7,  3,  6, 10,  3,  5,  9,  1,  1,  6,  2,  4,  2,
+      
+      10,  4, 10,  5,  7,  8,  3,  1,  1,  8,  6,  1,  8, 10,  6,  5,  6,  1,  1,
+       7,  4,  9,  7,  7,  8,  6,  6,  7,  8,  2,  6,  5,  9,  1,  9,  9,  9,  5,
+      10, 10,  9,  1,  6,  5,  3,  3,  5, 10,  9,  5,  2,  2,  9,  7,  6,  1,  4,
+      10,  5,  2,  1,  2,  2, 10,  9,  1,  7, 10,  4,  8,  1,  2,  7,  6,  7,  2,
+       8,  7,  9, 10,  5,  3,  1,  9,  6, 10,  5,  5,  1,  8,  5,  7, 10,  1,  9,
+      
+       4,  8,  2, 10,  4,  7,  8, 10,  7,  9,  9,  1,  1,  2,  1,  1,  6,  8,  9,
+      10,  9,  2,  2,  3,  8,  2,  3,  6,  4,  9,  7,  8,  1,  6,  7,  6, 10, 10,
+       4,  7,  4,  3,  9,  2,  3,  5,  5,  7,  7, 10,  5,  8,  5,  4,  5,  9,  2,
+       8,  7,  4,  5,  2,  9,  3,  6,  5,  9,  3,  6,  6, 10,  2,  8,  1,  3,  8,
+       4,  5,  6,  9,  3,  5,  5,  9,  7,  3,  7,  6, 10,  3, 10,  5,  5,  9,  3,
+      
+      4,  5,  1,  5,  8, 10,  9,  6,  9,  8,  8,  3,  3, 10,  8,  8,  4, 10,  7,
+      1,  9,  2, 10,  2,  1,  6,  7,  3,  3, 10,  3,  6,  2,  1,  3,  4,  2,  2, 
+      5,  8,  5,  8,  8,  5,  4,  4,  5,  7, 10,  8, 10,  6,  6,  4,  4,  5,  1, 
+      2,  3,  5,  5,  9,  7,  3,  4,  8,  8,  6,  3,  2,  3,  1,  9,  8,  3,  3,
+      2, 10,  8,  9,  3,  2,  3,  4,  3,  8,  7,  2,  4,  3,  2, 10,  1,  1,  7,
+      
+      1,  9,  8,  7,  1,  6,  8,  5,  3,  2,  5,  1,  5,  7,  7,  6,  1,  4,  1,
+      1,  9,  7, 10,  9,  3,  4,  5,  9,  1,  6,  1,  5,  8,  6,  5,  4,  2,  5,
+      6,  6
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(white_d10_df, set_fill_map["white"])
+```
+
+
+```{r white-dpct}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[1] & dice_setup$die == dice[5], "sample_size"] / 25
+
+# note: for convenience, rolls are recorded at 10% of roll value (e.g. 10 -> 1),
+#       then multiplied by 10 at the end to get the original value
+# note: '00' is read as '0' unless the simultaneous d10 is '0'; that makes '100'
+`white_d%_df` <- # want: 705 rolls
+  data.frame(
+    set = sets[1],
+    die = dice[5],
+    result = c( # 25 per full row
+      3, 6, 2, 4, 3, 4, 6, 4, 8, 6, 2, 0, 7, 0, 1, 9, 3, 4, 0, 6, 6, 7, 7, 0, 9,  
+      4, 2, 6, 9, 0, 8, 6, 2, 8, 2, 7, 0, 9, 3, 1, 9, 6, 0, 4, 1, 4, 1, 1, 6, 9,  
+      6, 2, 6, 0, 8, 6, 8, 8, 1, 7, 2, 3, 7, 8, 1, 0, 0, 9, 4, 6, 9, 9, 3, 7, 2,
+      9, 4, 4, 2, 6, 4, 2, 7, 6, 1, 3, 8, 0, 7, 6, 3, 1, 1, 4, 1, 8, 1, 5, 4, 6,
+      6, 8, 7, 8, 9, 7, 5, 8, 2, 7, 1, 0, 8, 7, 9, 0, 0, 4, 6, 9, 6, 9, 7, 2, 9,
+      
+      7, 8, 2, 8, 8, 0, 9, 6, 3, 5, 7, 1, 6, 3, 5, 6, 3, 6, 8, 2, 7, 4, 7, 5, 3,
+      2, 3, 6, 9, 7, 9, 8, 2, 7, 1, 9, 1, 5, 2, 2, 8, 2, 4, 3, 9, 5, 1, 9, 4, 0,
+      7, 7, 5, 2, 2, 5, 1, 8, 9, 1, 6, 3, 7, 2, 7, 3, 4, 8, 0, 8, 2, 6, 6, 7, 1,
+      5, 7, 4, 5, 3, 4, 4, 9, 8, 2, 1, 2, 3, 9, 8, 2, 7, 7, 8, 4, 8, 7, 2, 6, 7,
+      9, 0, 0, 0, 6, 3, 4, 6, 8, 4, 3, 3, 1, 0, 2, 6, 3, 3, 3, 4, 6, 5, 3, 6, 0,
+      
+      8, 2, 7, 5, 2, 6, 0, 3, 8, 1, 3, 2, 7, 0, 1, 8, 0, 7, 7, 0, 4, 8, 6, 3, 5,
+      4, 4, 6, 2, 6, 3, 3, 8, 7, 6, 0, 7, 2, 3, 4, 3, 1, 0, 4, 4, 2, 0, 4, 1, 8,
+      2, 6, 2, 6, 8, 9, 2, 3, 3, 8, 6, 1, 1, 6, 8, 6, 3, 6, 8, 7, 9, 0, 1, 3, 5,
+      6, 9, 7, 8, 8, 0, 2, 0, 0, 7, 3, 4, 9, 4, 1, 2, 2, 7, 0, 8, 4, 7, 4, 3, 8,
+      4, 2, 7, 0, 3, 7, 1, 2, 6, 0, 6, 4, 0, 2, 9, 7, 1, 3, 5, 6, 2, 5, 0, 5, 1,
+      
+      6, 5, 6, 8, 6, 1, 5, 1, 7, 6, 6, 9, 8, 0, 0, 4, 9, 2, 3, 3, 9, 5, 8, 3, 8,
+      3, 6, 4, 6, 2, 6, 8, 4, 3, 1, 0, 9, 8, 8, 7, 1, 9, 2, 9, 1, 4, 3, 6, 0, 5,
+      6, 4, 2, 1, 7, 0, 7, 6, 2, 0, 9, 0, 7, 7, 6, 5, 3, 7, 3, 8, 7, 1, 1, 9, 2,
+      4, 0, 2, 5, 4, 8, 1, 3, 4, 7, 1, 1, 0, 6, 8, 5, 2, 8, 5, 7, 1, 5, 2, 5, 0,
+      0, 2, 1, 7, 6, 9, 9, 2, 3, 9, 7, 5, 0, 6, 7, 9, 1, 3, 6, 6, 2, 0, 6, 4, 6,
+      
+      0, 9, 6, 7, 1, 9, 1, 7, 8, 1, 5, 6, 1, 2, 2, 7, 7, 1, 9, 5, 5, 5, 3, 0, 8,
+      7, 4, 2, 7, 5, 5, 1, 9, 7, 4, 1, 9, 2, 9, 4, 1, 1, 5, 4, 8, 9, 4, 6, 4, 1,
+      2, 4, 3, 2, 3, 0, 0, 9, 0, 3, 0, 5, 2, 6, 1, 2, 4, 2, 7, 0, 9, 7, 5, 5, 3,
+      4, 5, 0, 3, 0, 1, 1, 7, 0, 2, 6, 7, 1, 8, 8, 6, 6, 5, 2, 1, 2, 0, 5, 4, 7,
+      5, 8, 6, 3, 0, 7, 5, 0, 2, 5, 4, 3, 4, 9, 0, 1, 6, 7, 6, 1, 9, 0, 5, 4, 7,
+      
+      5, 8, 4, 2, 2, 7, 5, 7, 4, 9, 9, 6, 1, 8, 3, 8, 5, 1, 3, 3, 9, 3, 1, 3, 1,
+      9, 9, 7, 2, 8, 8, 2, 1, 9, 7, 7, 4, 0, 4, 8, 8, 4, 8, 3, 3, 9, 1, 1, 5, 8,
+      3, 1, 8, 7, 5, 9, 0, 3, 2, 4, 6, 1, 6, 6, 3, 6, 3, 6, 0, 0, 1, 2, 4, 9, 5,
+      3, 3, 8, 1, 9
+    )
+  ) %>% 
+  mutate(result = result * 10,
+         obs = 1:nrow(.))
+
+plot_result(`white_d%_df`, set_fill_map["white"])
+```
+
+
+```{r white-d12}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[1] & dice_setup$die == dice[6], "sample_size"] / 19
+
+white_d12_df <- # want: 908 rolls
+  data.frame(
+    set = sets[1],
+    die = dice[6],
+    result = c( # 19 per full row
+      5,  8,  5,  6, 10, 11,  6,  3,  8,  2,  5,  1, 12,  5,  8,  2, 10,  5,  7,  
+      8,  5,  9, 12,  7, 12,  5, 12, 12,  3,  8, 11,  9,  8,  5,  6, 11,  1,  7,
+      6,  3, 12,  6, 10,  2, 11, 12,  2,  9,  4,  6,  9,  7,  2, 11,  5,  3,  3,
+     12,  8,  1,  1, 10,  3,  6, 10, 12, 10, 11, 12, 12,  3,  7,  3, 12, 11,  7,
+     11, 12,  3,  7,  5,  5,  8,  7,  9, 11, 10,  4,  1,  7,  5,  5,  9,  5,  2,
+     
+      5, 11,  7,  5,  8,  7, 11,  7,  9,  9,  7, 12,  8,  5,  4,  8, 11,  1,  6,
+      7, 10,  6, 11, 10,  8, 10,  5, 12,  7,  2, 11,  9,  2,  6, 12,  9,  8,  4,
+     11,  4,  6,  3,  8,  9,  6, 12, 10, 12,  8,  9,  9,  5,  3,  9,  9,  4, 10,
+     10, 11, 12,  2,  2,  9,  4,  8,  8,  5, 10,  1,  9, 10,  6,  5, 11, 11,  9,
+      3, 10, 11, 11,  1,  2,  4,  8,  1,  2,  3,  6,  7, 10,  2, 11, 10, 10,  1,
+     
+      5, 10, 11,  3,  9,  5,  2, 10, 12,  9,  7,  8,  9,  4,  9,  9,  8,  9, 11,
+      3,  4,  5,  3, 11, 12,  7,  9, 11, 11,  8,  9, 12,  6,  8, 11,  4, 12,  9,
+     10,  6, 12, 12,  4,  6,  7,  8,  5, 11,  5,  7, 11,  6,  8, 12,  6,  4,  9,
+      3,  6,  5,  6, 12,  7, 11,  4,  2,  3,  6,  6,  6,  5, 11, 12, 12, 10,  3,
+     12,  4,  5,  3,  6,  1,  3,  6,  6,  4, 11, 10, 11,  8,  6,  6, 10, 11,  8,
+     
+      9,  5,  4,  4,  1, 11,  5, 12,  7,  7,  2,  7,  3,  4,  4, 12,  3,  2,  6,
+     10,  7,  3,  6,  6,  7,  2,  2, 11,  2, 10, 12,  3, 10,  4,  6,  7,  3,  8,
+      6, 10,  6,  7,  6,  7,  2,  7, 12,  5, 10,  8, 10,  9,  3,  4, 10,  6,  5,
+      7,  2,  3, 11, 10,  4,  6, 11,  4,  9,  8, 12, 12,  8,  7,  1,  9, 11,  2,
+      1,  1,  6, 10, 12, 10,  5,  5,  8, 12,  4, 12,  3, 12,  2,  5, 12, 12, 10,
+     
+      5,  5,  9,  7, 10,  2,  2, 12,  2, 12,  3,  2,  6,  5,  7,  7,  7,  3, 10,
+     10,  6,  5,  9,  4,  6, 10, 10,  4,  1, 11,  8,  6,  5, 11,  3,  5,  1, 10,
+      6, 10,  6,  4,  1,  4,  7, 10, 12, 12,  3, 11,  8,  4,  6,  4, 11,  4,  3,
+      7,  9, 11,  4,  9,  9,  1,  3,  9, 12, 10,  7,  2,  3, 12,  4,  6,  2,  3,
+      5,  2,  6,  2,  8,  3,  1,  7,  6,  7,  2,  4, 10,  4,  5,  7,  9,  6,  1,
+     
+      8,  9,  4, 11,  6,  8,  9,  7,  9, 11,  8, 10,  1,  9,  6,  7,  1,  1, 12,
+      6,  9,  7, 10, 10, 11,  1,  4,  6, 12,  5,  3,  5,  3,  7,  7,  1,  6,  1,
+      1,  6,  5,  1,  7,  7, 12,  6,  3,  9, 12, 10,  9,  8,  2,  8, 12,  4,  4,
+      3,  1,  3,  5,  3, 11, 11, 10,  1,  4,  2, 10,  3,  8,  9,  6,  9,  7,  8,
+     12, 12,  5, 11,  7,  6,  2,  2, 12,  1,  2, 11, 12, 10, 12, 10,  6,  6,  4,
+      
+      1,  3,  8, 12,  2,  7,  7,  3,  3,  2,  1,  7, 12,  2,  5,  4, 10,  4,  3, 
+      5,  6,  1,  9,  9,  3,  1,  8,  2,  9, 10,  3,  8,  1,  7,  3,  5,  9, 11,
+      9,  1,  5,  4, 10, 11,  2, 10, 12,  3, 10,  5, 11,  2, 12,  1,  3, 10,  1,
+     10,  9, 10,  6,  2, 12, 12,  6, 10, 12,  7,  3, 11,  8,  9,  4,  5, 11,  7,
+      1, 10, 12,  9,  2,  1,  8,  6, 11,  9, 12,  1, 11,  1,  8,  6,  5,  3,  1,
+     
+      2,  4,  5, 12, 11, 10,  5,  2,  8,  3,  8,  4,  9,  9,  5,  2, 12,  2,  3,
+      1,  5,  5,  6, 10,  7,  3,  9, 12,  2,  7,  4,  6,  3,  7, 10,  8,  6,  9,
+     12,  2,  5,  9, 12, 11,  8,  6,  5,  2,  7,  2,  1,  3,  3,  3, 12, 12,  7,
+      8, 10,  7,  8,  3,  2,  6, 11, 10,  9, 12,  3,  8,  6,  8, 11,  4,  2, 10,
+      6,  3,  9,  2,  5, 10,  8,  9,  2,  3,  2,  9,  6,  4,  5,  5,  7,  6, 12,
+     
+     12,  5,  4,  1,  8,  2,  6, 11,  4,  5,  1,  1,  8,  9,  3,  3,  4, 11,  6,
+      3,  9,  5,  9,  7,  3,  2, 11,  8,  9,  9,  3,  6, 12,  6, 12,  8, 12,  5,
+      4,  3,  1,  7, 12,  3,  6,  8, 11, 10,  1,  8,  2, 12,  9,  6,  8,  4,  1,
+      5, 11,  9,  8,  5,  7, 11,  2,  4, 10,  7,  5, 10,  8, 10,  3,  8,  7,  9,
+      8, 11,  1,  3,  7,  6, 11,  2,  9,  5,  2,  8, 10,  4,  4, 10,  4,  3, 10,
+     
+     11,  2, 12, 12,  5,  6, 12,  3,  1, 10,  7,  4,  8, 10,  4,  9,  5, 11,  8,
+      6,  5, 10, 12, 11,  1,  8,  1,  1,  7,  5,  3,  9,  2,  4,  7, 10,  8,  3,
+      9,  8,  8, 12,  7,  7,  1,  3,  7,  1, 10,  7,  3,  5,  4 
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(white_d12_df, set_fill_map["white"])
+```
+
+
+```{r white-d20}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[1] & dice_setup$die == dice[7], "sample_size"] / 19
+
+white_d20_df <- # want: 1851 rolls
+  data.frame(
+    set = sets[1],
+    die = dice[7],
+    result = c( # 19 per full row
+     19,  9, 10,  3, 20, 13, 10,  8, 15, 16, 12, 18,  3, 15,  6,  4, 11, 10,  8,
+     16,  1, 18, 19,  9, 16, 15,  9,  9, 19,  4,  2, 15, 10, 15,  1, 10, 10,  6,
+     18,  5, 13, 16, 18, 20,  2,  8,  7, 14, 12, 18, 19,  6, 20, 20, 15, 15,  5,
+     11, 11,  4, 16, 12,  2, 13, 20,  9,  9, 14, 17, 17,  6, 16, 20,  5, 10,  9,
+      1, 19, 20, 14, 17, 15, 18, 17, 18, 16,  6,  7,  5, 13,  5,  1, 13,  2, 10,
+     
+     13, 15, 18, 13, 15, 16, 16, 12, 14, 20,  3, 12, 15,  8, 17, 16,  9, 14, 10,
+      5,  9, 14,  9,  2,  2, 10, 16,  8, 18,  4, 11, 18, 20,  9,  7,  3, 18, 11,
+     15, 13,  1,  6,  1,  9,  7, 20,  5,  7,  1,  5,  6,  1,  5, 16,  7, 16,  6,
+      1, 10, 15,  1, 19,  6,  9, 20, 19,  7,  4, 18, 20,  4,  5, 15,  6, 18,  2,
+     16, 11, 10,  6,  8, 14,  4,  7,  1, 15,  8, 12, 16,  4, 13,  7,  3, 17, 17,
+     
+     16,  6,  8, 15, 17,  5, 18, 17, 19,  6, 14, 18, 13, 15,  4, 15,  4, 17, 12,
+     10, 14, 10, 14,  3, 11, 17, 18,  9,  1, 16,  6, 17, 19, 20, 10, 12, 13, 10,
+      9, 16, 19, 10,  3,  2, 10,  9,  2, 18,  9, 16, 19,  8,  6, 17, 13, 15,  3,
+      4,  2, 10,  8,  6,  3,  5,  1,  1, 19,  4, 13,  5,  8, 12, 12, 13, 10, 17,
+     20,  8, 16,  8, 20,  3, 11, 20,  3,  5, 15,  9, 12,  6,  9, 16, 16,  8, 20,
+     
+     18, 17,  3, 18, 10, 13, 13,  7, 14, 15, 17,  2, 11,  5,  5,  1,  6, 16, 10,
+     13, 12, 13, 16,  6,  7, 20,  6,  1, 12,  9, 19, 11, 11, 11,  2, 11,  7,  3,
+      1,  4, 14,  3, 17,  3, 17,  5, 14, 10,  4, 16, 12,  7,  3,  9,  6,  2, 17,
+     11, 18, 20,  7,  7,  8, 16, 13, 15,  8,  6, 16, 19,  6, 15,  5, 16,  3, 20,
+     18, 12, 18, 13,  2,  4,  8, 18, 15, 11, 11, 10, 19, 12,  6, 19,  2, 16,  4,
+     
+      6, 17,  9, 17,  3, 19, 16, 18,  8,  3,  1,  4, 16, 19, 18, 17, 18,  8, 20,
+     15,  3,  3,  9, 12, 15,  4, 16, 15, 11, 20, 18,  3,  5,  5,  9,  5, 12,  5,
+     15,  3, 13,  1, 10, 10,  9,  8,  8,  4,  6,  7,  7, 13, 16, 16, 20,  1,  6,
+     16,  4, 16,  5,  2,  8,  9,  1,  7, 16, 10,  2, 14, 15, 18, 17, 12, 18,  3,
+     11,  3,  4,  8,  3,  1, 18, 13, 15, 13, 11, 10, 18,  3, 10,  2,  4, 17,  5,
+     
+     11,  9, 17, 15,  7,  3, 15, 12,  6, 15, 19, 11,  4,  3, 18,  4, 15, 10,  5,
+      6,  6,  7, 17,  6,  7,  8,  8, 11, 12, 12,  1, 13,  9, 11, 13, 15, 20, 18,
+     17,  2, 14,  6, 12, 12,  3,  7, 16, 16,  3,  3, 17, 13,  3, 12, 18, 15,  3,
+     10,  9,  7,  2,  4,  2, 20, 10, 12,  6,  9, 14, 15, 14, 14,  6,  9,  9,  6,
+     19, 12, 18,  5, 11, 15, 14, 10,  3, 13, 18, 14, 13,  2,  9,  9,  7, 19, 15,
+     
+      8,  6, 15, 15, 17, 18,  1, 11, 16,  7, 15, 15, 12,  2, 13, 16, 15, 14, 11,
+     18, 17,  7, 19, 19, 13, 20, 17,  4, 19,  7,  5, 11,  9, 19, 17, 17, 16, 20,
+      6, 10,  1, 15,  8, 17, 10, 20, 18,  6, 17, 15,  4, 11, 12,  9,  1,  5,  2,
+     16, 16,  7,  1,  8,  7,  2,  8, 12, 14,  4, 13, 18, 12,  5, 15, 12, 12, 16,
+     
+      7,  7,  2,  2, 10, 10,  4, 17,  2,  5, 18, 17, 18, 19, 17,  8,  5, 17, 13,
+     11,  2,  3, 17, 11, 17, 15, 16,  6,  3, 16, 18,  9, 13,  5, 17,  9, 17, 17,
+     13,  6, 12, 15, 16, 10, 19, 20,  2,  4,  3,  6, 11,  9,  9,  5, 12, 12,  8,
+     16,  3,  4,  6, 11,  3, 11,  9, 16, 15, 18,  9,  8, 18, 15, 18, 20, 10, 12,
+      6,  4, 10,  6,  8,  7, 11, 16, 16,  5,  4, 16,  5, 11, 17, 16, 19, 20,  2,
+     
+     17,  5,  4,  7, 13, 12, 12,  3,  4, 13, 19, 14,  5,  5,  4,  3, 19,  1, 16,
+     16, 15, 14, 17,  8, 16, 10,  9, 10, 11,  4,  6,  6,  4,  4, 12,  6,  5, 11,
+     18, 10, 10, 15,  1, 15, 11,  8, 17,  6,  9,  3,  4, 16, 13, 15, 15,  5,  6,
+     19,  4,  4,  3, 16,  9, 14,  7, 12,  3,  3, 19, 20, 10,  7,  9,  6,  5,  6,
+     17, 19, 14, 15,  7, 12, 16, 16,  3,  4, 12, 16, 10,  8,  9, 11, 15,  2,  4,
+     
+      5,  7, 10,  5, 13,  5, 12, 18, 17, 10,  5, 16, 18,  9, 20,  4,  9,  4, 10,
+      4,  1, 14, 14, 18, 18,  6,  1,  9,  1, 18,  6,  6, 15, 15,  6,  4,  6, 17,
+      6, 16, 10, 18,  5, 20, 20,  6,  2,  7,  4, 18, 16,  9, 10,  2, 15, 14, 10,
+     17,  6,  5,  7,  1, 10, 12,  9,  3, 20, 13, 18,  6, 17,  4,  9, 14,  3, 19,
+     13,  6, 19,  4,  8, 11, 17, 15,  3, 20, 19, 16,  3,  3,  9,  9, 20,  4,  6,
+     
+     13, 19,  3,  3, 12,  5, 10, 13,  9,  3, 11, 11,  6, 12, 20, 17,  6,  9, 16,
+     13,  3,  9,  4, 17,  2, 19,  6, 14,  6, 19,  4,  4,  2, 14,  8,  8, 15,  1,
+     17, 15, 12,  4,  4,  4,  1,  8,  4, 12, 12, 16,  4,  5,  8,  7,  1, 17,  5,
+      7, 20, 10, 20,  9,  4,  9,  6, 11, 14, 20, 17,  5,  6, 15, 10, 14,  9,  4,
+     19, 19,  9, 12,  3,  6, 18, 12,  3,  7, 19, 18, 13, 20, 15, 13,  4,  4,  2,
+     
+     18, 11,  8,  9, 12,  3,  1, 18,  5, 20, 12, 16,  6, 12, 13,  8, 18, 16,  5,
+     13,  2,  1,  6, 13, 16,  8,  1, 20, 15,  9,  2,  3, 10,  2, 10, 15,  8, 17,
+      8, 12,  2,  5, 12, 12,  2,  9,  5, 15, 18, 17, 15, 15, 15,  4, 20,  5, 10,
+     15,  4,  3, 10, 10, 13, 16,  3, 14, 14,  1,  1,  4,  7,  1,  3,  9, 18, 10,
+      4, 16, 15,  5,  6,  3, 16, 18,  3,  2,  1,  8, 18, 10, 10, 14, 18,  6,  2,
+     
+      8, 13, 13, 17, 19,  7, 12, 17, 18,  5,  9,  3,  9, 15, 15, 16,  9,  6,  6,
+     16, 12, 16,  9,  3, 17, 17, 20, 15,  5,  8, 11, 13, 19, 15, 18,  3,  7,  3,
+     11, 12, 15, 15,  8,  4,  8,  2,  3, 15,  8, 17, 13, 11,  2, 17,  5, 10, 16,
+      6,  6,  2, 13,  2, 17, 11, 16,  7, 11, 11, 17,  2,  1,  3,  8,  7,  5, 14,
+     12, 12, 13, 13, 11, 17,  7, 16,  8,  4, 11, 17,  5, 14, 10, 16, 11, 13,  8,
+     
+      7,  1,  4, 15,  7, 18, 18, 11, 18,  9, 19,  5, 20,  5,  6,  6, 11,  7, 14,
+      5, 16,  7,  9,  4, 12, 19,  9,  9,  9, 13, 17,  7, 10,  5, 15, 13, 15,  4,
+     12, 10, 12,  1, 17,  6,  7,  8, 18,  9, 20, 18,  3, 18, 19, 20,  6,  4, 15,
+      1,  6,  8,  7, 17,  9, 11,  5, 20,  9,  8, 13, 19, 19,  7, 10,  8,  8,  7,
+      8, 17,  7,  6,  9, 13, 10,  3, 16, 13, 18,  6, 12, 15,  1, 14, 18, 15, 17,
+     
+      9, 20,  3, 10,  6, 17, 15, 16, 17, 15, 20,  9, 15,  7, 10, 14, 20,  4, 17,
+      5, 17, 13, 17,  7, 17, 17, 13, 16,  9, 11, 20,  9,  3,  9,  3, 15, 19, 19,
+     11,  7, 11, 10,  6,  8, 10, 15,  7, 19,  3, 11, 10,  3, 13, 13, 16,  6, 16,
+     18,  8,  3, 12,  8, 19,  4,  1, 20,  7,  5,  5,  5, 10,  2, 16, 19, 10, 16,
+     17,  6, 12, 11, 20,  6, 16,  9, 13, 14, 18, 19,  4,  5,  5,  6,  3,  2, 12,
+     
+      4, 14,  3, 12,  8,  5,  9, 20,  5, 17,  8,  7, 12,  6, 17, 14, 15,  7,  2,
+     14,  5, 18, 19,  6, 14,  6, 20,  8, 18,  5,  7,  9, 16, 18, 13,  9,  2, 18,
+     10,  5, 18, 19,  1,  3, 11,  1, 10, 15, 20,  4, 18, 10, 19, 11,  9,  1, 13,
+     20, 10, 11,  4, 15, 17,  9,  4, 14, 11, 13,  5, 20, 10,  6, 13, 20,  6,  6,
+      9,  3, 16,  3, 16, 18,  4,  9, 14, 10, 17, 10,  8,  7, 15, 13,  1, 14, 11,
+     
+     15,  1,  2,  7,  7, 15, 15,  4,  5, 12, 16, 15, 12,  6,  5,  5, 15,  7, 10,
+     16,  1,  4,  7, 12, 17,  3,  9, 12, 20, 16, 20, 10, 17, 14,  5, 16, 14,  1,
+      9, 10, 20, 10,  3, 12,  2,  7,  3, 13, 10, 15, 15, 20,  8, 16, 14,  9,  6,
+     10,  7, 12, 20, 17, 15,  9,  6,  7,  7, 19, 16, 20, 12, 15, 10,  8,  5, 10,
+      8,  6,  6, 10, 12,  7, 13, 12, 13, 10, 10,  9,  7,  4,  8, 10, 14, 14,  6,
+     
+     19,  4,  9, 19, 16, 15, 12,  3, 15,  3, 11, 11, 18,  5, 15, 15,  7, 15, 10,
+      9,  1, 16, 11, 17,  1,  4, 15, 10, 17, 17, 15, 15,  1, 12, 18, 10, 18,  6,
+     17,  6,  9, 17, 17,  5, 12,  7, 17,  7,  5,  3,  2,  2,  5, 19,  2, 20, 20,
+     19, 13,  3,  5, 18, 10, 13,  6, 17,  5,  5,  4, 11, 12,  8,  4,  5,  4,  6,
+     16, 12,  7, 15, 11,  5, 10, 11,  6, 12, 11,  1, 15, 11, 16, 15, 18, 16, 15,
+     
+      9, 12,  5,  4,  3,  3, 17, 16,  1, 13,  2,  2, 12, 15,  8, 11, 12,  3, 14,
+     15,  1,  9, 10, 15, 19, 15,  7, 11, 16, 18,  9, 12, 12,  7, 11,  3,  3,  1,
+     12,  6,  1, 20, 15,  8,  6, 11, 19,  8, 16,  6, 15,  1, 11,  6,  2, 18,  6,
+     11, 15, 15,  2, 20, 18, 10, 17, 11,  9,  3, 15, 11,  9, 11, 16,  5,  4, 15,
+      5, 10,  1,  4, 17, 10, 18,  3, 18,  2, 18, 13, 15, 13,  3,  4,  4, 13,  1,
+     
+      8, 18,  9,  4,  6, 19, 20,  6,  9,  1,  9, 18,  7, 15,  9,  5,  6,  6, 13,
+      1, 16,  4, 15,  3, 16, 18,  5, 10, 11,  5, 13, 19, 19, 10, 14,  8, 17,  8,
+      6,  6, 11, 18,  1, 18, 19,  7, 15,  5,  8,  1,  5, 14, 16,  6, 16, 11,  9,
+     18, 16, 18,  7, 14,  6,  7,  9 
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(white_d20_df, set_fill_map["white"])
+```
+
+
+### Grey Dice
+
+```{r grey-d4}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[2] & dice_setup$die == dice[1], "sample_size"] / 25
+
+grey_d4_df <- # want: 197 rolls
+  data.frame(
+    set = sets[2],
+    die = dice[1],
+    result = c( # 25 per full row
+      2, 3, 4, 2, 2, 1, 3, 3, 1, 2, 3, 1, 4, 4, 4, 4, 2, 4, 1, 2, 2, 2, 4, 3, 2,
+      4, 3, 3, 3, 1, 4, 1, 2, 4, 2, 4, 1, 2, 3, 2, 3, 2, 2, 3, 2, 1, 3, 3, 4, 2,
+      1, 1, 3, 4, 2, 2, 3, 4, 2, 4, 3, 4, 2, 2, 4, 3, 2, 1, 2, 3, 2, 2, 2, 1, 2,
+      4, 4, 1, 1, 4, 2, 2, 3, 4, 1, 4, 2, 3, 3, 1, 3, 4, 3, 3, 2, 3, 1, 4, 4, 2,
+      4, 1, 1, 2, 4, 3, 4, 1, 2, 2, 1, 3, 2, 3, 2, 4, 1, 1, 4, 4, 4, 4, 3, 4, 4,
+      
+      2, 3, 2, 4, 1, 3, 1, 3, 1, 4, 4, 2, 1, 4, 2, 1, 1, 1, 3, 1, 3, 1, 1, 2, 4,
+      3, 4, 3, 2, 4, 1, 4, 2, 2, 3, 2, 2, 3, 1, 4, 2, 1, 4, 1, 1, 1, 1, 3, 4, 4,
+      4, 1, 2, 3, 1, 1, 1, 1, 4, 1, 2, 1, 4, 1, 4, 3, 3, 3, 2, 3, 1, 3
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(grey_d4_df, set_fill_map["grey"])
+```
+
+
+```{r grey-d6}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[2] & dice_setup$die == dice[2], "sample_size"] / 25
+
+grey_d6_df <- # want: 347 rolls
+  data.frame(
+    set = sets[2],
+    die = dice[2],
+    result = c( # 25 per full row
+      6, 5, 6, 4, 1, 2, 3, 6, 6, 5, 3, 1, 2, 2, 6, 2, 1, 5, 4, 6, 1, 4, 2, 1, 6,
+      6, 5, 4, 2, 6, 1, 4, 1, 5, 6, 6, 3, 3, 5, 2, 6, 6, 5, 5, 4, 2, 2, 5, 2, 1,
+      1, 3, 2, 6, 3, 1, 3, 2, 6, 3, 1, 6, 4, 4, 4, 6, 3, 1, 5, 3, 3, 4, 6, 3, 1,
+      3, 2, 2, 2, 3, 3, 6, 5, 5, 1, 6, 3, 5, 6, 6, 1, 6, 3, 1, 2, 1, 3, 4, 3, 1,
+      6, 6, 4, 5, 4, 5, 3, 5, 2, 6, 4, 4, 6, 3, 6, 1, 4, 3, 5, 1, 4, 5, 5, 2, 5,
+      
+      6, 3, 5, 2, 4, 2, 4, 6, 1, 5, 5, 4, 6, 4, 6, 4, 6, 3, 4, 4, 3, 4, 2, 1, 4,
+      6, 3, 1, 3, 5, 4, 1, 3, 5, 4, 1, 6, 3, 1, 5, 5, 6, 5, 3, 2, 1, 6, 3, 6, 3,
+      4, 4, 5, 2, 2, 2, 1, 2, 1, 3, 3, 5, 3, 4, 5, 5, 5, 5, 4, 1, 1, 2, 1, 4, 1,
+      4, 5, 1, 3, 5, 4, 2, 1, 4, 6, 6, 1, 6, 1, 4, 6, 2, 1, 1, 4, 6, 4, 4, 1, 2,
+      3, 2, 6, 3, 2, 4, 2, 3, 5, 2, 2, 5, 6, 2, 5, 3, 4, 1, 6, 1, 6, 3, 4, 4, 6,
+      
+      5, 2, 3, 4, 6, 6, 3, 4, 2, 6, 3, 3, 4, 6, 1, 2, 4, 2, 6, 3, 2, 6, 3, 3, 5,
+      6, 6, 2, 4, 1, 6, 1, 5, 4, 5, 4, 3, 1, 1, 5, 5, 6, 6, 1, 4, 2, 2, 6, 2, 1,
+      1, 1, 1, 5, 3, 1, 6, 6, 6, 6, 2, 2, 2, 3, 5, 3, 4, 5, 2, 3, 4, 6, 6, 6, 2,
+      5, 1, 2, 4, 3, 5, 6, 5, 1, 3, 6, 4, 6, 5, 4, 1, 5, 3, 5, 2, 3, 6
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(grey_d6_df, set_fill_map["grey"])
+```
+
+
+```{r grey-d8}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[2] & dice_setup$die == dice[3], "sample_size"] / 25
+
+grey_d8_df <- # want: 517 rolls
+  data.frame(
+    set = sets[2],
+    die = dice[3],
+    result = c( # 25 per full row
+      3, 2, 3, 3, 1, 8, 4, 5, 4, 5, 7, 1, 2, 6, 6, 4, 8, 1, 1, 4, 5, 2, 1, 4, 1,
+      3, 4, 4, 2, 3, 5, 2, 8, 4, 7, 8, 1, 8, 4, 5, 5, 4, 5, 1, 7, 6, 4, 6, 4, 4,
+      3, 7, 7, 1, 2, 5, 6, 8, 2, 6, 4, 4, 6, 6, 5, 8, 4, 5, 1, 3, 6, 7, 7, 4, 8,
+      5, 2, 1, 8, 8, 8, 7, 5, 1, 6, 7, 1, 5, 5, 1, 2, 4, 6, 3, 6, 2, 6, 1, 4, 4,
+      2, 8, 8, 1, 3, 4, 3, 7, 3, 7, 4, 8, 7, 3, 4, 1, 8, 2, 4, 6, 3, 1, 3, 3, 3,
+      
+      2, 5, 3, 1, 7, 5, 6, 7, 5, 8, 2, 8, 2, 8, 6, 1, 4, 3, 4, 5, 4, 7, 5, 2, 7,
+      5, 4, 6, 7, 8, 7, 5, 4, 6, 5, 1, 6, 2, 2, 8, 6, 5, 7, 7, 2, 6, 8, 3, 3, 3,
+      5, 4, 6, 4, 5, 6, 3, 5, 7, 3, 2, 8, 2, 6, 1, 2, 3, 4, 8, 1, 3, 6, 7, 1, 5, 
+      3, 4, 8, 8, 5, 7, 3, 5, 1, 7, 6, 4, 7, 7, 4, 1, 8, 7, 2, 2, 4, 8, 2, 3, 2,
+      2, 6, 6, 8, 5, 5, 1, 1, 7, 7, 4, 1, 7, 8, 2, 5, 6, 8, 7, 5, 1, 1, 3, 6, 8,
+      
+      2, 7, 8, 4, 3, 8, 5, 3, 1, 6, 3, 2, 5, 5, 5, 7, 3, 7, 6, 6, 2, 2, 1, 1, 5,
+      1, 6, 2, 1, 8, 7, 1, 5, 7, 6, 8, 6, 4, 7, 8, 7, 1, 1, 7, 3, 1, 1, 8, 5, 1,
+      8, 7, 8, 7, 4, 5, 4, 3, 6, 1, 2, 3, 7, 6, 8, 3, 1, 5, 7, 2, 3, 7, 1, 4, 8,
+      7, 4, 7, 6, 3, 4, 8, 2, 2, 4, 5, 1, 3, 8, 3, 5, 2, 3, 5, 6, 8, 6, 3, 4, 8,
+      7, 3, 4, 3, 5, 6, 7, 4, 2, 3, 8, 5, 5, 3, 2, 6, 6, 8, 5, 1, 8, 7, 6, 4, 6,
+      
+      3, 3, 5, 2, 8, 4, 1, 6, 6, 4, 2, 3, 7, 6, 5, 4, 3, 8, 6, 3, 5, 5, 4, 4, 8,
+      6, 7, 7, 1, 4, 2, 4, 7, 8, 2, 2, 8, 8, 1, 8, 1, 3, 7, 5, 6, 4, 4, 6, 8, 4,
+      8, 1, 1, 6, 1, 3, 4, 5, 3, 8, 2, 1, 8, 1, 8, 3, 4, 4, 3, 6, 3, 5, 4, 3, 7,
+      1, 6, 1, 1, 6, 7, 2, 4, 4, 3, 6, 7, 2, 2, 4, 1, 1, 2, 7, 3, 7, 1, 6, 3, 5,
+      4, 4, 4, 4, 3, 8, 6, 8, 5, 6, 8, 5, 1, 6, 5, 2, 5, 1, 8, 1, 2, 6, 8, 2, 2,
+      
+      8, 2, 4, 2, 1, 5, 4, 1, 6, 3, 8, 3, 2, 6, 8, 1, 6
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(grey_d8_df, set_fill_map["grey"])
+```
+
+
+```{r grey-d10}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[2] & dice_setup$die == dice[4], "sample_size"] / 25
+
+grey_d10_df <- # want: 705 rolls
+  data.frame(
+    set = sets[2],
+    die = dice[4],
+    result = c( # 25 per full row
+      4, 2, 4, 7, 2, 2, 8, 7, 0, 6, 3, 9, 1, 0, 6, 6, 5, 4, 6, 4, 7, 5, 2, 4, 5,
+      7, 4, 0, 8, 4, 9, 7, 8, 1, 6, 8, 5, 7, 5, 3, 3, 9, 1, 8, 7, 2, 3, 7, 5, 9,
+      8, 5, 5, 8, 5, 8, 6, 7, 5, 0, 9, 2, 1, 1, 4, 7, 1, 9, 3, 6, 4, 5, 6, 4, 4,
+      9, 8, 0, 9, 4, 6, 2, 6, 5, 0, 6, 4, 8, 3, 0, 4, 3, 8, 6, 7, 2, 9, 4, 0, 0,
+      0, 7, 5, 3, 5, 0, 3, 9, 1, 1, 6, 2, 6, 7, 8, 8, 4, 1, 4, 4, 5, 5, 8, 8, 0,
+      
+      7, 7, 2, 4, 2, 4, 5, 6, 7, 9, 2, 7, 8, 4, 5, 0, 1, 2, 6, 8, 2, 0, 2, 4, 9,
+      3, 9, 3, 9, 6, 7, 5, 1, 9, 9, 5, 4, 4, 5, 1, 0, 2, 6, 1, 5, 7, 5, 5, 9, 5,
+      5, 7, 3, 1, 2, 0, 9, 8, 2, 1, 5, 8, 5, 4, 9, 8, 4, 4, 7, 0, 8, 9, 7, 2, 1,
+      4, 9, 2, 6, 1, 2, 9, 4, 9, 6, 1, 4, 5, 8, 3, 2, 5, 4, 8, 9, 1, 9, 7, 3, 8,
+      0, 9, 6, 2, 3, 4, 3, 5, 4, 2, 5, 3, 8, 7, 2, 9, 4, 2, 3, 4, 2, 1, 5, 8, 8,
+      
+      6, 1, 6, 5, 6, 8, 0, 2, 7, 6, 4, 6, 9, 8, 9, 8, 8, 4, 8, 9, 2, 1, 5, 4, 6,
+      2, 9, 8, 8, 0, 6, 2, 7, 9, 5, 3, 2, 3, 6, 6, 2, 7, 8, 4, 3, 0, 0, 9, 7, 0,
+      8, 9, 8, 4, 9, 4, 4, 2, 2, 1, 2, 5, 4, 0, 0, 3, 8, 6, 4, 2, 1, 6, 6, 9, 9,
+      9, 5, 2, 0, 9, 0, 3, 9, 6, 7, 3, 7, 0, 6, 4, 0, 4, 9, 9, 1, 8, 6, 9, 8, 2,
+      5, 3, 0, 0, 5, 4, 9, 1, 7, 3, 0, 2, 5, 6, 5, 7, 7, 8, 8, 9, 4, 5, 5, 0, 5,
+      
+      1, 7, 6, 4, 1, 6, 4, 3, 5, 0, 3, 3, 0, 3, 7, 9, 2, 6, 2, 1, 8, 0, 0, 3, 8,
+      8, 8, 7, 4, 7, 7, 3, 5, 6, 4, 5, 0, 3, 2, 0, 7, 6, 5, 6, 1, 8, 8, 3, 5, 2,
+      0, 8, 6, 2, 2, 6, 8, 8, 9, 3, 2, 0, 8, 7, 8, 6, 5, 3, 9, 8, 2, 4, 8, 3, 0,
+      2, 9, 4, 0, 9, 4, 3, 8, 3, 1, 3, 5, 9, 8, 9, 6, 7, 3, 3, 9, 0, 8, 3, 1, 1,
+      7, 5, 9, 1, 5, 8, 2, 7, 7, 3, 7, 5, 8, 0, 1, 5, 0, 5, 6, 0, 4, 0, 0, 1, 1,
+      
+      8, 5, 8, 0, 6, 8, 8, 9, 1, 1, 9, 8, 3, 6, 0, 5, 2, 0, 3, 6, 8, 7, 8, 2, 1,
+      0, 3, 8, 2, 1, 3, 5, 1, 3, 0, 2, 6, 9, 6, 7, 4, 3, 3, 2, 0, 2, 7, 8, 1, 1,
+      4, 3, 0, 1, 1, 5, 8, 3, 5, 9, 3, 8, 9, 7, 0, 6, 1, 3, 8, 9, 6, 7, 1, 6, 1,
+      7, 9, 9, 2, 0, 2, 3, 1, 1, 9, 4, 2, 0, 8, 7, 1, 5, 7, 5, 8, 9, 2, 6, 8, 9,
+      2, 1, 6, 4, 2, 5, 6, 1, 8, 3, 4, 5, 3, 5, 0, 5, 7, 7, 7, 2, 4, 6, 7, 1, 5,
+      
+      3, 6, 1, 9, 4, 6, 3, 2, 6, 0, 7, 4, 6, 2, 1, 4, 5, 7, 1, 8, 9, 9, 6, 7, 7,
+      3, 4, 0, 6, 0, 6, 6, 8, 7, 2, 1, 8, 0, 1, 9, 1, 0, 6, 5, 6, 4, 4, 9, 8, 6,
+      6, 9, 9, 7, 3, 5, 9, 4, 6, 7, 0, 0, 6, 0, 9, 5, 1, 2, 8, 4, 9, 9, 2, 4, 3,
+      2, 2, 0, 8, 4
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+grey_d10_df$result[grey_d10_df$result == 0] <- 10
+
+plot_result(grey_d10_df, set_fill_map["grey"])
+```
+
+
+```{r grey-dpct}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[2] & dice_setup$die == dice[5], "sample_size"] / 19
+
+`grey_d%_df` <- # want: 705 rolls
+  data.frame(
+    set = sets[2],
+    die = dice[5],
+    result = c( # 25 per full row
+      5, 3, 1, 0, 2, 7, 0, 8, 6, 1, 6, 9, 2, 7, 6, 4, 1, 1, 1, 6, 1, 2, 9, 8, 5,
+      2, 6, 9, 0, 3, 6, 4, 6, 5, 8, 4, 6, 9, 5, 4, 6, 5, 7, 1, 1, 6, 1, 6, 7, 9,
+      9, 8, 7, 6, 6, 6, 4, 9, 4, 9, 9, 8, 4, 8, 1, 5, 6, 4, 5, 2, 7, 9, 9, 0, 3,
+      6, 6, 9, 2, 9, 1, 7, 5, 7, 9, 0, 9, 6, 9, 8, 9, 5, 9, 0, 3, 7, 0, 0, 6, 1,
+      1, 6, 0, 5, 5, 1, 3, 1, 9, 3, 8, 2, 0, 3, 0, 2, 1, 1, 1, 5, 5, 9, 4, 5, 4,
+      
+      6, 3, 9, 9, 3, 5, 9, 0, 5, 0, 0, 1, 8, 7, 6, 3, 5, 4, 7, 4, 5, 9, 5, 0, 5,
+      6, 3, 9, 7, 3, 2, 1, 4, 7, 7, 0, 8, 4, 3, 2, 6, 8, 0, 8, 9, 8, 2, 0, 9, 5,
+      1, 6, 4, 8, 9, 7, 6, 5, 3, 3, 0, 1, 1, 0, 1, 1, 0, 4, 7, 8, 2, 5, 6, 6, 4,
+      1, 6, 7, 7, 6, 0, 5, 5, 1, 2, 6, 0, 8, 4, 0, 6, 4, 5, 7, 0, 7, 5, 6, 8, 2,
+      3, 8, 3, 2, 0, 7, 4, 5, 6, 9, 9, 7, 8, 0, 4, 8, 5, 3, 4, 8, 3, 8, 7, 1, 0,
+      
+      6, 5, 5, 8, 8, 9, 7, 6, 3, 5, 9, 1, 3, 6, 3, 5, 6, 4, 8, 9, 9, 5, 0, 9, 3,
+      4, 2, 4, 2, 1, 9, 8, 0, 9, 4, 3, 1, 0, 6, 0, 7, 7, 0, 3, 4, 2, 4, 4, 1, 9,
+      2, 2, 4, 9, 4, 4, 4, 5, 5, 5, 0, 1, 4, 5, 0, 7, 9, 9, 4, 6, 3, 7, 8, 6, 3,
+      9, 8, 4, 6, 8, 9, 3, 5, 5, 2, 6, 5, 8, 5, 4, 2, 4, 5, 7, 1, 2, 6, 6, 7, 8,
+      0, 5, 7, 4, 1, 9, 3, 3, 8, 9, 7, 6, 4, 4, 6, 2, 3, 0, 4, 8, 7, 6, 5, 3, 1,
+      
+      0, 8, 2, 2, 4, 3, 2, 2, 3, 9, 0, 5, 3, 6, 1, 6, 0, 4, 3, 3, 0, 4, 7, 4, 5,
+      4, 4, 7, 3, 4, 2, 9, 7, 8, 1, 2, 4, 3, 0, 1, 3, 9, 6, 6, 6, 8, 3, 6, 4, 0,
+      3, 0, 9, 0, 3, 2, 9, 0, 0, 0, 7, 5, 8, 4, 3, 2, 7, 0, 3, 2, 6, 9, 4, 1, 8,
+      1, 2, 5, 4, 2, 1, 3, 9, 0, 4, 5, 0, 1, 2, 5, 9, 8, 4, 6, 7, 7, 6, 1, 2, 2,
+      6, 2, 7, 4, 0, 1, 6, 1, 2, 3, 0, 8, 6, 2, 3, 7, 8, 2, 7, 0, 5, 5, 2, 3, 6,
+      
+      5, 2, 6, 8, 9, 9, 0, 0, 5, 8, 2, 2, 4, 1, 5, 8, 4, 7, 8, 5, 4, 8, 7, 5, 4,
+      9, 5, 3, 6, 8, 0, 2, 5, 4, 2, 6, 6, 5, 4, 3, 3, 1, 1, 8, 2, 3, 0, 3, 4, 6,
+      4, 0, 3, 9, 5, 8, 2, 7, 5, 2, 5, 0, 3, 3, 4, 0, 1, 7, 1, 8, 1, 6, 6, 9, 2,
+      5, 3, 4, 9, 1, 7, 7, 8, 2, 1, 1, 4, 3, 3, 4, 5, 9, 9, 0, 2, 2, 2, 3, 4, 8,
+      7, 7, 1, 0, 9, 2, 0, 6, 4, 2, 9, 6, 7, 7, 7, 2, 3, 0, 8, 3, 1, 5, 8, 9, 1,
+      
+      8, 5, 9, 5, 6, 6, 9, 7, 4, 3, 2, 2, 6, 0, 0, 7, 2, 5, 6, 2, 4, 1, 0, 3, 8,
+      9, 9, 1, 2, 7, 3, 4, 0, 4, 7, 8, 6, 5, 0, 4, 4, 4, 6, 6, 9, 1, 4, 3, 5, 7,
+      5, 4, 8, 4, 5, 6, 4, 2, 1, 0, 0, 9, 8, 9, 6, 3, 1, 0, 5, 0, 1, 7, 0, 1, 7,
+      8, 6, 5, 7, 8
+    )
+  ) %>% 
+  mutate(result = result * 10,
+         obs = 1:nrow(.))
+
+plot_result(`grey_d%_df`, set_fill_map["grey"])
+```
+
+
+```{r grey-d12}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[2] & dice_setup$die == dice[6], "sample_size"] / 19
+
+grey_d12_df <- # want: 908 rolls
+  data.frame(
+    set = sets[2],
+    die = dice[6],
+    result = c( # 19 per full row
+       5,  6, 11,  3, 12,  5,  8, 12,  7,  8,  2, 12,  8,  9,  6,  1, 11,  4, 12,
+       4,  1,  1,  9, 10, 10,  1, 10,  4, 11,  2,  8,  6, 11,  4,  4,  3,  6, 11,
+       8,  6,  6, 10, 10, 12,  2, 12,  1,  8,  1,  3, 10,  6,  8,  3,  3,  2,  1,
+       3,  1,  4,  4,  5,  2,  4, 11, 12, 11,  8, 11,  2,  2,  1,  8,  4, 12, 12,
+      12,  1,  9,  3,  1, 12,  1,  9,  5,  5, 11,  9, 11, 11,  4,  2,  2, 12,  5,
+      
+       5,  8,  6,  7,  8,  1,  5, 11,  8,  8,  9,  6,  2,  1,  9,  6,  1,  9, 11,
+       7,  4,  4,  7,  6,  7,  7, 10,  5,  4, 10,  3, 12,  1, 11,  6,  4,  3,  2,
+       5, 11,  2,  7, 12,  9,  1, 10,  2,  4,  5,  9, 10,  5,  3, 11,  1,  1,  2,
+      12,  1, 12,  8, 10,  6,  6,  7,  4,  3, 11,  3,  1,  4,  3, 11,  5,  3, 10,
+       7,  8,  5,  1, 11,  1,  6,  9,  1,  7, 12,  8,  8,  4,  2,  9, 12,  4,  6,
+      
+       6,  8,  3,  3,  2,  2, 11, 10,  4,  8,  8, 12,  4,  8,  7, 11,  9,  2,  9,
+       5,  2,  6,  6,  1, 11,  1,  7,  3, 12,  4,  4, 10,  3,  5, 11,  7,  8,  2,
+       8,  9,  4,  7,  2,  2,  9,  4,  4, 12,  2, 11,  6,  2,  5,  2,  4,  4,  7,
+       8, 10,  6,  1,  4, 11,  3,  3,  3,  5,  6,  4, 12,  1, 10, 12,  7, 11,  4,
+      12,  8, 10,  1,  1,  9,  7,  4,  2,  6,  6,  7,  9,  5, 12,  4,  3,  3,  8,
+      
+      11,  2,  2,  7,  6,  8,  5,  3, 11, 11, 12,  1,  3,  7, 12, 10,  9,  8,  3,
+       7,  8,  8,  7,  8, 11,  7,  3,  3,  8,  3, 10,  4,  5,  5,  8,  4,  5,  1, 
+       9,  5,  3,  9,  9,  3, 10, 11,  8,  8,  1,  7, 12,  7,  6,  5,  8, 10,  6,
+      10,  8, 12,  8,  8,  1,  8,  9, 10,  7,  2,  1,  4, 10, 10,  9,  3,  7,  7,
+       4,  7,  2,  9,  7,  2, 12,  2,  3,  9,  5,  9,  8,  2,  6,  2,  7,  3,  3,
+      
+       3, 11,  4,  7,  5,  3,  9,  1, 10,  9,  8, 10,  9,  4,  8, 10,  1,  2, 12,
+       9,  3,  6, 11,  2,  2,  3,  3, 10,  8, 12,  7, 11, 11,  9,  6,  8,  3,  5,
+      11,  9, 11,  1,  7,  4,  4,  9,  9,  6, 10, 10,  9, 11,  8, 11,  6, 10,  4,
+       9, 12,  6,  7,  5,  3,  9,  9,  5,  3,  6,  7, 11,  3,  8, 11,  1,  9,  3,
+       9,  3,  5,  9,  6,  1, 10,  8,  6,  6, 10,  9, 10,  2,  3,  2,  2,  4,  6,
+      
+       4,  1,  1, 10,  7,  1,  9,  9,  7, 12,  7,  1,  3, 10,  4,  3, 10, 12,  5,
+       7,  1, 10,  3,  1,  1,  4,  2,  8,  2,  4,  4,  1, 11,  5,  9, 10,  3,  5,
+       6,  4,  4,  5,  2,  5,  7, 11,  2,  8,  3,  7, 10, 11,  7, 10, 10,  3,  4,
+      12,  7, 10, 12,  3,  1,  4,  5,  8,  6,  6,  4, 12,  6,  4,  9,  3,  7,  6,
+       8, 11,  8, 12,  9,  5,  5,  4, 10,  2,  1,  3,  9,  2,  6,  7,  1,  4, 10,
+      
+       7,  9,  5,  3,  3,  6,  9, 10, 12, 11,  4,  1,  7, 12, 12,  5,  6, 12,  6,
+       8,  3,  5,  4,  4,  3,  4,  6, 11,  7, 12,  4,  1,  4, 11, 12,  8,  4,  1,
+       5, 10,  5,  3,  6,  9,  7,  5,  2,  9,  5,  2, 12,  8,  6,  7, 10, 12, 11,
+       2, 12,  5,  9,  6,  6, 10,  2,  9,  7,  7,  6,  3,  5, 11,  9,  2,  9,  7,
+      11, 10,  5,  6,  9,  8,  3,  5,  3,  5, 11,  7,  3,  2,  6,  4,  3,  4,  5,
+      
+      11,  3, 10,  7,  1,  2,  9, 11,  6, 11,  6,  6,  4,  8, 10,  9,  8,  3, 10,
+      10, 10,  6,  3,  6,  3,  4,  8,  7,  9, 11,  1, 11, 11,  3, 12,  5,  6,  4,
+       9,  9,  3,  2,  9, 10,  5, 11,  8,  8,  1,  4,  9,  4, 11,  8, 11, 12,  5,
+       9,  2,  9,  6,  9,  5,  8,  5, 11,  8, 12,  6,  3,  5,  1,  9,  8,  5,  9,
+       5,  3,  9,  9,  4, 12,  1, 11, 11,  1,  9, 12,  3,  5,  3,  3,  2,  3, 11,
+      
+      11, 12, 10, 12,  2, 11,  2,  5,  9,  8,  9, 12,  2,  3, 11,  5,  7,  5,  6,
+       4,  3,  7,  8,  4, 12,  9,  6,  8,  6,  5,  2,  9, 12,  1, 12,  3, 11,  7,
+       2,  8,  1,  1,  6, 10, 11,  8,  6,  1, 11,  7, 11,  9,  8,  5,  9, 10, 10,
+       5, 10,  6, 10, 11,  4,  4, 12, 10, 11,  3,  4,  5, 11,  7, 12,  8,  6,  5,
+       9, 10,  3, 12,  3,  4,  9,  9,  1, 12,  7, 11,  1,  7, 10,  7,  6,  9,  9,
+      
+      10,  2, 10,  7,  7,  4, 11, 11,  2,  9,  3, 12, 11,  4,  3,  2,  6,  4,  2,
+       9,  9,  9,  3,  4,  8, 10,  3,  8,  3,  4,  2,  9,  5,  3,  5,  3,  1,  9,
+      10,  9,  8,  8, 11,  6,  2, 12,  9, 11,  1,  3,  7,  9,  1
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(grey_d12_df, set_fill_map["grey"])
+```
+
+
+```{r grey-d20}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[2] & dice_setup$die == dice[7], "sample_size"] / 19
+
+grey_d20_df <- # want: 1851 rolls
+  data.frame(
+    set = sets[2],
+    die = dice[7],
+    result = c( # 19 per full row
+      19,  7,  8, 18,  5, 16,  4, 12,  2, 19, 15, 20, 17, 15, 16,  3, 11,  6, 20,
+       4,  2,  2, 19,  3, 14, 11, 18, 13,  9,  2,  1,  3, 10, 13,  4, 20,  1,  9,
+       8, 18, 14,  4,  4, 10,  8, 20, 14, 11,  8, 19, 17, 10, 15, 10, 15, 18,  7,
+      20, 14,  1,  5,  8,  7,  7,  3,  4,  8, 20, 16,  2,  6,  3, 17,  3, 20, 16,
+      17, 10,  6,  2, 19, 13, 16, 15, 20,  6, 17, 15,  1,  7,  2,  2, 17, 11, 19,
+      
+      13,  7, 12, 15,  4, 13, 12, 19, 20, 11, 12, 15, 11, 16, 18, 11,  4,  5, 18,
+       4, 12,  4,  2,  9, 10, 19,  7, 16,  8,  4, 14, 16, 15,  9, 12,  6,  7,  3,
+       9,  3,  8,  1,  3, 11, 18, 17, 15, 16,  2,  5, 11, 16, 10, 11, 16, 10,  3,
+      20, 16,  9,  4,  3, 18,  1,  7,  3,  2, 20, 19,  7,  7,  3, 19, 11,  4, 15,
+      10, 12, 20,  6,  3, 20, 18,  7, 10, 12,  3,  2, 15, 17, 12,  6, 13,  6, 10,
+      
+       5, 16,  2, 10,  8, 19, 18, 20, 20,  3, 11,  5, 20,  8,  2,  4, 19, 13,  6,
+       5,  3,  7, 12,  4, 11, 14, 18, 17,  3,  8,  6,  3,  6,  5,  9, 11,  4, 15,
+       4,  9, 12,  2,  5,  1, 12,  5, 14,  2,  1,  4, 16,  1, 17,  1,  7,  3,  8,
+      11,  9, 10, 15,  2, 12,  5, 18,  5,  5, 16, 10, 13,  4,  9, 13,  9,  4, 15,
+       7, 18,  1, 17,  1, 13, 15,  6,  2,  9, 18,  8, 20,  1, 19,  2,  4, 13, 14,
+      
+      14, 20, 14,  3, 15,  4,  2,  7, 12, 19,  6, 17,  3, 15, 10,  2,  5,  2,  8,
+      16, 12,  9, 17, 12,  1, 18, 12,  6, 20,  4, 20,  3, 12, 15,  9,  2,  4, 11,
+      15, 11, 17,  9, 13, 10, 18,  6, 13, 19,  6, 12,  6, 18,  2, 17, 17, 11,  4,
+      13, 18, 12,  5,  6, 13, 10,  7,  3, 17,  6,  4, 16,  7,  9,  7,  8,  4, 11,
+       2,  4,  6, 16,  1, 14,  9,  3, 11,  5,  7, 15,  7,  4,  3,  6,  4, 14,  5,
+      
+      13, 19, 12, 10, 12,  8, 14,  6, 15,  2,  6,  5, 16, 20, 10,  7,  8, 19, 16,
+      15, 17, 13,  6, 13, 10,  5,  6, 15, 17, 15,  7,  7, 19, 18, 19, 11,  6, 11,
+       4,  8, 11, 13,  9,  4,  2,  6, 12,  2, 13,  4,  2, 13, 10, 19, 16, 17, 14,
+      11, 16,  8, 15,  4,  9,  8, 14, 12,  6,  3,  1,  3, 13, 12, 13, 13,  9,  5,
+      16, 15,  9, 10,  4, 14,  7, 11,  2,  9,  4, 15,  6, 15,  5,  6,  6,  1, 10,
+      
+       3, 11,  1,  6, 12, 19, 15, 16,  1, 20, 10, 11, 17, 16, 20,  3, 20,  5, 18,
+      10,  7, 19,  5,  8,  9, 15, 13, 20, 11, 10,  9,  9, 18, 16,  4, 15, 11,  8,
+       9,  5,  9, 12,  4, 13,  6, 15,  4,  5, 14, 13, 11,  3, 10,  2,  9,  5, 15,
+       7,  2,  4,  1,  1, 19,  2,  3, 10, 18, 17, 17,  8, 10,  7, 16, 13,  9,  2,
+       3,  5, 11, 18, 11,  3,  7, 16, 20, 15, 14, 11,  2, 15, 13,  5, 18,  9, 19,
+      
+       9,  4, 11,  7, 11, 11, 10,  6,  8,  2,  9, 15,  2, 15, 18,  6, 15, 17, 14,
+       7, 11,  2, 14, 10,  6, 13, 17,  3,  1,  5,  5, 19, 20, 12, 13,  2,  6,  6,
+      19, 20,  7,  3,  2,  8, 13, 12, 18, 18,  5, 16, 10,  3, 14, 10,  7, 19, 15,
+       7,  3,  9,  2,  7, 16,  8, 11, 18, 16,  6, 11,  9, 20,  6,  2, 12,  8, 18,
+      16, 17,  3,  1, 12, 18, 15,  5, 11,  5, 16, 20, 11, 10,  1,  7,  7,  3,  2,
+      
+      17, 10,  7, 16, 15, 18,  4, 16,  1, 16, 11,  9, 10, 12, 13, 12, 10, 11, 20,
+       7, 15, 16, 11,  8, 19,  7, 16, 18, 11, 10,  3, 15,  8,  5, 16, 17, 20,  9,
+       7,  7,  3,  6, 11,  9, 19, 13, 16,  2, 10, 13, 16,  9, 10,  2, 20, 10, 15,
+       4,  3,  3,  6, 12, 10,  9,  4,  6,  2, 20,  1,  9,  8,  4, 13,  3, 16,  2,
+      10,  8, 14,  8, 16, 11,  7,  3,  4,  9,  3,  8,  4, 19,  5, 14,  8, 20, 15,
+      
+       1,  2, 16,  7, 13, 11, 12, 18,  8,  1, 19,  5,  2,  3, 15,  3,  8, 20,  2,
+      13,  9,  4, 19,  7, 10, 11, 16,  3,  1, 18, 18,  7,  3, 16, 16, 12, 17,  9,
+       7,  3,  9,  4,  9,  2,  2, 18, 20, 15, 16, 11, 13, 13,  2, 17,  6,  8,  4,
+       5, 18, 17, 15,  6,  1, 17, 10,  4,  9, 17, 19, 19, 11, 18, 20,  7,  6, 15,
+      10,  7,  7,  3, 17, 19,  4, 10, 11, 16,  5, 10, 12, 10,  5,  1,  4, 19,  3,
+      
+       7, 12, 15, 11, 15, 12, 12, 20, 10, 15, 18, 11, 17, 16,  4, 10,  4, 16,  9, 
+      14, 20,  7,  8,  1, 17,  2,  5,  7, 18, 12, 14, 11,  3,  3, 12,  4,  4, 10,
+      11, 20, 14, 16,  2, 11, 11, 19, 19, 14,  2,  9, 17, 13,  3,  4, 18, 12,  8,
+      18,  6,  2, 13,  5,  4,  4,  8, 15, 17, 17, 17, 12, 12, 16, 13,  3, 17,  5,
+      17,  8,  6,  8,  8,  4,  1, 10,  2, 13,  7, 13,  9, 17, 20, 16, 10, 16, 10,
+      
+       9, 18,  6, 18, 18, 10, 17, 15,  6, 12, 14, 10,  4, 18, 15,  3,  1, 13, 10, 
+      12, 10, 16, 12,  2,  2,  8,  3,  1, 18,  8, 16, 15,  5, 12,  8,  4,  3,  3,
+       4, 12, 16, 16,  3,  9, 10, 16,  8, 17,  2,  9,  5,  5, 15, 14,  5, 16,  9,
+       6, 14, 12,  8, 13,  8,  9, 10,  2, 15,  4, 16,  6, 12, 12,  9,  2, 16, 11,
+       2,  9,  6,  9,  1,  16, 13, 5, 16, 11, 19, 17, 16, 10,  8, 19,  4,  5, 14,
+      
+       3,  9, 12, 10,  8,  6, 14, 14, 15, 20,  3, 17, 16, 17,  4,  7,  1, 15,  6,
+       4,  1, 11,  7,  5, 14, 10, 10, 17, 11, 16,  8,  7, 17,  8,  4,  6, 18, 14,
+      18, 20,  7, 18,  4,  4,  3, 12, 16, 20, 18, 11, 20,  3,  1,  5,  8, 18,  4,
+       4, 17,  2, 10, 11, 16,  1, 17,  5, 17, 16,  1, 20, 13, 20, 13,  7, 10,  8,
+      18, 15,  1,  9,  5,  2, 15, 18, 12,  6, 15, 10, 16, 18,  3,  5,  2, 15,  4,
+      
+      18, 16, 18, 11, 18, 17,  3, 15, 19, 16,  5, 19, 16,  7,  8, 16, 19,  7,  9,
+       4,  5, 17,  1, 19, 15,  2,  7,  6, 10,  9,  1,  8,  3, 11,  6,  5,  3,  7,
+      16, 16,  1, 16, 11,  3, 10, 19, 20,  5,  1, 11, 11, 11, 11,  5,  4, 14,  4,
+      14,  9, 11, 11, 15,  8,  7, 13, 10,  9, 11, 17,  6, 17, 14,  9,  7, 13, 17,
+       6,  9,  8, 17, 12, 14, 19,  9, 17,  3,  5,  1, 14, 11, 17, 20,  8,  1,  5,
+      
+      17, 13,  5, 17, 17,  1, 11, 19, 15, 11, 20, 12, 12, 10, 12, 18, 10, 10, 11,
+       6, 17, 12,  7,  7, 11, 16,  6, 18, 11, 14,  2, 20,  7, 19,  7, 18, 20, 19,
+       2,  2, 16, 13, 19,  4, 19,  8,  1, 16, 17, 17,  3,  7, 10,  4,  4, 14,  9,
+      18,  7, 14,  8, 11, 12,  8, 18, 19, 19,  4, 11,  8, 17, 13,  9,  8, 12, 15,
+      10, 18,  3, 19,  9, 16,  6, 18,  4, 11, 10,  3,  3,  7, 18,  7, 14, 20,  3,
+      
+       6,  6,  9, 18, 10,  6, 15,  7, 20, 12, 12,  2, 19,  8,  3, 11, 17, 14, 18,
+      12,  1,  2, 14,  9, 12, 17, 13,  7, 15, 10, 11,  6,  6, 20,  1,  8, 12, 15,
+       1,  3, 14,  3, 13,  9, 16, 10, 20, 16,  9,  8, 12,  8, 10,  7, 18, 14, 20,
+      15, 19,  3,  8, 12,  8, 11, 12, 13, 10,  7,  5, 20,  7,  1,  3,  6, 18, 10,
+       6,  5,  4,  2, 16, 15, 10,  4,  7, 11, 14, 20,  4,  4, 12, 16,  9, 12, 11,
+      
+       4, 11,  6,  9, 20, 19, 15, 18,  4, 17,  8,  7, 18,  3, 11,  6, 16,  9,  9,
+       2, 16, 12, 15, 18, 19,  6, 11,  2,  6, 18, 12, 20,  2,  8,  4,  3,  6, 15,
+      14,  9, 15,  3,  2,  9, 14,  1,  4, 15, 12, 13,  4, 18, 11, 18, 11,  5, 11,
+      13, 19, 12,  9,  8,  3,  9,  6,  2,  4,  3, 16,  5, 18, 10,  8,  6, 16, 20,
+       6, 17,  7, 12,  6, 10, 18, 19, 20, 12, 13, 11,  2,  9, 19,  2,  6,  4, 11,
+      
+       2, 11, 20, 16,  3,  8, 20, 15, 19,  8, 13, 15, 11, 11, 16, 14,  9,  6, 16,
+      15, 11,  3, 11,  9, 16, 17, 20,  6, 17,  9, 20, 15,  3, 10,  4, 12, 15, 11,
+      13, 10,  9, 19, 12,  4, 18,  5, 14, 19, 17, 12,  7, 20,  2, 11,  6,  2,  5,
+       5, 13,  1, 11, 20,  8,  3, 18,  7, 14, 15,  3,  3,  5,  3, 16, 15, 19,  9,
+      11, 20, 13, 14,  4, 15, 11,  8, 19,  8, 19, 13, 17,  1,  4, 18,  6,  3, 15,
+      
+      16,  5,  3, 13,  5,  6,  7,  5, 13,  5,  4, 10, 16, 10,  3, 19,  9, 15,  9,
+       6, 20, 10, 19,  6, 20,  2, 15, 11, 15, 13, 20,  2, 11,  4, 18,  5, 14,  7,
+       2, 12, 18,  2, 15, 16,  6,  5, 16,  1, 16,  4, 20, 10, 12, 14, 12, 16,  6,
+      12,  8, 12,  3, 16, 16,  5,  2,  1, 14, 14, 16,  8, 18, 14,  1, 10, 18, 11,
+      16, 17, 18,  9, 17, 18, 14,  4, 12, 12,  8,  6,  2, 18, 14, 10, 18, 17,  4,
+      
+      19, 10, 12, 18,  4, 12,  4,  4, 19,  3,  5, 18,  4,  5,  5,  6, 15, 14,  6,
+       1,  3,  3,  9, 14, 15,  3,  9,  7,  4,  1, 13, 10, 11,  9,  2, 14,  5, 19,
+      19, 16,  9,  3, 11,  1, 18, 10,  4, 20, 12,  7,  7,  8,  5, 18,  8,  4,  3,
+       1,  2, 12,  9, 19, 12, 15, 17,  3,  3,  2, 20, 15, 11,  3, 10, 13, 14, 20,
+      14,  9,  1, 12,  5, 12,  9, 10, 10,  2,  7, 13, 11, 17,  3, 11, 12, 17,  1,
+      
+       9, 15,  8, 20,  4, 14, 15, 16,  9, 10, 16, 17,  9,  4, 17,  5,  2,  7, 16,
+      17,  2,  5,  7, 10, 10,  4, 15,  9,  6, 20, 14, 16,  2, 18, 13, 20, 11,  6,
+       9, 15,  5,  6,  3,  7, 20,  3
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(grey_d20_df, set_fill_map["grey"])
+```
+
+
+### Black Dice
+
+```{r black-d4}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[3] & dice_setup$die == dice[1], "sample_size"] / 25
+
+black_d4_df <- # want: 197 rolls
+  data.frame(
+    set = sets[3],
+    die = dice[1],
+    result = c( # 25 per full row
+      4, 1, 1, 2, 3, 2, 2, 1, 4, 2, 3, 1, 2, 1, 4, 1, 1, 4, 1, 3, 4, 3, 1, 3, 2,
+      4, 1, 2, 1, 1, 4, 4, 3, 4, 2, 3, 3, 4, 3, 4, 1, 2, 3, 2, 4, 4, 4, 4, 2, 2,
+      1, 2, 3, 3, 1, 3, 4, 2, 3, 3, 2, 1, 3, 4, 4, 3, 2, 3, 2, 3, 4, 4, 3, 2, 4,
+      1, 4, 4, 3, 1, 1, 3, 1, 4, 2, 1, 2, 3, 4, 4, 2, 3, 3, 3, 1, 2, 1, 3, 4, 3,
+      2, 1, 4, 2, 4, 4, 2, 3, 2, 2, 2, 1, 3, 3, 2, 3, 3, 3, 1, 4, 4, 1, 1, 1, 4,
+      
+      3, 3, 3, 4, 2, 3, 3, 2, 1, 4, 2, 2, 4, 4, 1, 2, 3, 1, 3, 3, 2, 2, 4, 2, 2,
+      3, 4, 3, 4, 4, 4, 3, 1, 3, 2, 2, 1, 3, 1, 2, 3, 2, 2, 2, 2, 1, 3, 4, 2, 3,
+      1, 1, 1, 3, 2, 1, 4, 2, 1, 2, 3, 4, 3, 2, 3, 3, 1, 2, 2, 4, 1, 4
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(black_d4_df, set_fill_map["black"])
+```
+
+
+```{r black-d6}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[3] & dice_setup$die == dice[2], "sample_size"] / 25
+
+black_d6_df <- # want: 347 rolls
+  data.frame(
+    set = sets[3],
+    die = dice[2],
+    result = c( # 25 per full row
+      4, 2, 4, 5, 1, 1, 5, 5, 6, 2, 3, 6, 5, 1, 4, 5, 4, 3, 5, 1, 1, 3, 4, 5, 6,
+      2, 1, 1, 2, 1, 6, 6, 4, 2, 6, 1, 2, 3, 1, 4, 3, 3, 4, 2, 2, 4, 1, 3, 4, 6,
+      1, 4, 6, 5, 3, 1, 5, 4, 5, 1, 6, 5, 3, 6, 5, 6, 3, 1, 2, 3, 1, 6, 3, 5, 5,
+      6, 2, 1, 2, 1, 4, 3, 6, 2, 5, 3, 6, 6, 4, 4, 6, 1, 2, 3, 5, 3, 1, 6, 6, 1,
+      3, 1, 5, 1, 2, 5, 2, 4, 1, 1, 4, 6, 5, 5, 2, 4, 5, 4, 6, 4, 5, 1, 5, 3, 1,
+      
+      2, 4, 5, 2, 4, 5, 1, 4, 1, 5, 1, 4, 1, 3, 2, 4, 4, 5, 4, 2, 6, 6, 2, 1, 2,
+      3, 6, 3, 6, 4, 1, 3, 5, 5, 3, 5, 5, 3, 1, 6, 5, 2, 2, 2, 5, 1, 3, 4, 1, 5,
+      5, 4, 1, 3, 5, 4, 1, 6, 3, 2, 5, 4, 5, 3, 2, 1, 4, 5, 6, 6, 2, 4, 6, 6, 3,
+      2, 6, 3, 1, 6, 5, 1, 2, 2, 1, 2, 6, 6, 2, 6, 3, 1, 1, 1, 2, 5, 4, 6, 6, 2,
+      1, 6, 6, 4, 6, 6, 6, 6, 4, 2, 4, 1, 2, 3, 6, 3, 5, 4, 4, 2, 4, 2, 6, 5, 4, 
+      
+      6, 3, 4, 6, 3, 1, 3, 4, 5, 2, 6, 4, 2, 6, 3, 1, 1, 3, 5, 1, 1, 1, 6, 2, 2,
+      6, 5, 4, 5, 1, 5, 6, 1, 5, 1, 6, 5, 4, 5, 5, 4, 2, 5, 5, 2, 1, 1, 4, 4, 6,
+      6, 5, 2, 6, 2, 3, 6, 4, 5, 4, 1, 3, 6, 1, 5, 6, 6, 6, 3, 1, 4, 6, 1, 1, 3,
+      6, 3, 4, 1, 4, 3, 6, 4, 2, 4, 1, 1, 6, 2, 1, 2, 6, 5, 4, 3, 4, 2
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(black_d6_df, set_fill_map["black"])
+```
+
+
+```{r black-d8}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[3] & dice_setup$die == dice[3], "sample_size"] / 25
+
+black_d8_df <- # want: 517 rolls
+  data.frame(
+    set = sets[3],
+    die = dice[3],
+    result = c( # 25 per full row
+      6, 7, 4, 5, 6, 6, 6, 4, 6, 7, 6, 8, 3, 5, 1, 8, 1, 8, 7, 3, 7, 7, 8, 7, 7, 
+      3, 8, 7, 7, 7, 4, 4, 2, 7, 6, 1, 8, 3, 4, 8, 4, 8, 3, 7, 3, 5, 3, 8, 2, 2,
+      7, 3, 5, 8, 4, 7, 1, 8, 5, 6, 2, 1, 8, 8, 6, 2, 1, 1, 1, 1, 7, 2, 4, 2, 5,
+      7, 8, 5, 7, 2, 6, 7, 1, 2, 8, 4, 5, 1, 4, 5, 1, 7, 7, 8, 7, 4, 5, 7, 8, 8,
+      5, 3, 5, 3, 5, 1, 5, 7, 4, 1, 5, 3, 8, 2, 1, 6, 4, 6, 4, 6, 5, 8, 6, 7, 2,
+      
+      1, 1, 1, 1, 8, 3, 4, 5, 6, 3, 7, 5, 4, 5, 2, 3, 5, 7, 5, 5, 1, 6, 7, 8, 2,
+      7, 3, 6, 5, 2, 1, 2, 4, 6, 1, 5, 4, 8, 2, 8, 8, 7, 4, 7, 5, 7, 4, 5, 6, 6,
+      2, 6, 5, 3, 4, 8, 7, 4, 3, 5, 8, 5, 1, 8, 5, 3, 4, 8, 8, 6, 5, 7, 8, 6, 4,
+      4, 8, 2, 8, 5, 2, 7, 2, 5, 4, 3, 6, 4, 5, 3, 7, 2, 1, 6, 4, 2, 3, 2, 7, 5,
+      6, 3, 5, 4, 1, 2, 4, 6, 8, 1, 3, 8, 5, 5, 2, 1, 4, 7, 1, 7, 1, 5, 2, 5, 4,
+      
+      7, 7, 7, 5, 1, 4, 5, 3, 1, 7, 8, 5, 2, 1, 2, 8, 1, 8, 8, 2, 5, 3, 7, 4, 2,
+      4, 6, 5, 3, 4, 6, 4, 6, 3, 5, 3, 1, 6, 1, 2, 1, 5, 5, 8, 6, 3, 3, 1, 4, 5,
+      7, 8, 5, 2, 1, 2, 1, 2, 5, 8, 1, 3, 7, 3, 2, 6, 1, 5, 8, 1, 5, 7, 5, 2, 7,
+      7, 4, 2, 6, 6, 7, 6, 6, 7, 4, 6, 6, 2, 7, 2, 5, 2, 8, 4, 4, 2, 7, 4, 2, 1,
+      4, 1, 5, 8, 7, 8, 6, 5, 1, 8, 8, 1, 6, 2, 6, 8, 1, 2, 7, 8, 3, 5, 7, 5, 2,
+      
+      2, 3, 5, 6, 5, 4, 8, 8, 2, 7, 7, 6, 5, 7, 8, 6, 6, 8, 1, 1, 5, 1, 8, 3, 3,
+      8, 2, 3, 2, 7, 5, 6, 5, 6, 3, 8, 8, 6, 5, 3, 2, 7, 3, 6, 1, 7, 8, 5, 7, 1,
+      6, 5, 2, 5, 6, 8, 6, 6, 6, 3, 1, 7, 7, 8, 8, 8, 6, 4, 5, 2, 2, 1, 4, 5, 3,
+      6, 2, 4, 3, 5, 5, 2, 5, 1, 7, 7, 2, 1, 6, 5, 4, 8, 1, 2, 1, 3, 3, 1, 3, 3,
+      4, 4, 7, 3, 1, 2, 3, 1, 6, 1, 5, 8, 1, 2, 7, 5, 8, 5, 1, 5, 4, 6, 8, 1, 5,
+      
+      3, 4, 4, 3, 3, 7, 2, 6, 6, 2, 4, 1, 4, 2, 6, 6, 3
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(black_d8_df, set_fill_map["black"])
+```
+
+
+```{r black-d10}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[3] & dice_setup$die == dice[4], "sample_size"] / 25
+
+black_d10_df <- # want: 705 rolls
+  data.frame(
+    set = sets[3],
+    die = dice[4],
+    result = c( # 25 per full row
+      2, 5, 4, 7, 6, 0, 1, 3, 4, 7, 3, 3, 9, 2, 8, 1, 9, 5, 5, 4, 1, 1, 8, 3, 1,
+      2, 7, 7, 6, 5, 4, 4, 4, 4, 4, 3, 6, 1, 0, 9, 0, 1, 4, 1, 3, 1, 8, 8, 0, 5,
+      1, 8, 0, 3, 8, 2, 4, 5, 7, 1, 9, 2, 9, 5, 9, 6, 6, 8, 3, 3, 8, 5, 4, 7, 6,
+      9, 3, 9, 6, 3, 4, 6, 7, 3, 6, 4, 0, 2, 1, 5, 3, 2, 5, 8, 0, 0, 0, 5, 0, 9,
+      0, 7, 0, 1, 8, 8, 9, 4, 8, 0, 9, 2, 9, 5, 4, 2, 7, 6, 3, 8, 6, 1, 6, 4, 6,
+      
+      5, 2, 0, 7, 1, 7, 2, 4, 0, 0, 1, 0, 0, 1, 4, 2, 5, 5, 4, 2, 4, 3, 3, 6, 9,
+      5, 9, 7, 9, 1, 9, 6, 4, 0, 3, 8, 8, 3, 1, 0, 5, 6, 4, 7, 6, 9, 7, 8, 2, 8,
+      9, 8, 9, 9, 1, 6, 1, 5, 8, 0, 8, 5, 5, 8, 0, 4, 7, 7, 0, 1, 4, 4, 1, 6, 9,
+      4, 7, 0, 7, 1, 5, 4, 6, 9, 4, 7, 6, 5, 3, 1, 7, 3, 5, 4, 4, 7, 4, 3, 1, 7,
+      1, 2, 0, 7, 2, 8, 0, 9, 5, 8, 2, 7, 2, 1, 7, 2, 7, 6, 1, 6, 5, 6, 1, 6, 2,
+      
+      2, 0, 1, 5, 5, 5, 2, 8, 2, 5, 0, 3, 5, 8, 5, 2, 9, 7, 3, 6, 0, 1, 4, 1, 6,
+      9, 5, 0, 8, 3, 6, 8, 4, 2, 7, 0, 3, 6, 2, 2, 2, 4, 9, 9, 8, 7, 1, 6, 4, 0,
+      6, 6, 4, 9, 7, 0, 5, 3, 9, 0, 3, 4, 1, 1, 8, 5, 4, 4, 9, 1, 3, 5, 8, 5, 3,
+      1, 9, 0, 4, 7, 0, 5, 7, 4, 4, 1, 6, 7, 7, 8, 3, 8, 3, 0, 9, 6, 6, 3, 4, 3,
+      8, 1, 9, 9, 3, 8, 1, 2, 2, 5, 3, 3, 7, 7, 5, 8, 9, 5, 0, 5, 2, 8, 9, 1, 6,
+      
+      3, 3, 5, 6, 8, 6, 9, 3, 1, 7, 6, 3, 9, 4, 2, 5, 7, 9, 1, 8, 7, 3, 2, 9, 9,
+      7, 6, 8, 5, 6, 5, 2, 2, 8, 0, 2, 3, 5, 5, 8, 3, 1, 1, 3, 0, 9, 8, 0, 7, 1,
+      1, 8, 6, 2, 2, 3, 4, 6, 6, 8, 3, 3, 5, 8, 0, 8, 0, 5, 4, 6, 9, 0, 7, 1, 5,
+      4, 6, 9, 9, 0, 1, 8, 1, 1, 5, 8, 4, 9, 3, 6, 3, 8, 8, 7, 8, 3, 5, 9, 7, 6,
+      9, 2, 3, 9, 9, 0, 4, 2, 5, 7, 1, 2, 8, 7, 7, 2, 3, 6, 0, 0, 7, 2, 4, 0, 8,
+      
+      4, 0, 3, 7, 3, 4, 6, 4, 8, 8, 4, 0, 4, 5, 6, 1, 7, 3, 6, 2, 2, 7, 5, 8, 9,
+      3, 6, 4, 2, 0, 0, 5, 5, 8, 1, 3, 4, 1, 5, 4, 6, 4, 1, 6, 1, 1, 1, 5, 5, 0,
+      8, 3, 0, 9, 4, 1, 7, 0, 0, 7, 3, 4, 3, 9, 0, 6, 9, 3, 9, 6, 6, 3, 9, 2, 6,
+      1, 4, 5, 5, 9, 3, 9, 9, 1, 6, 9, 7, 6, 5, 3, 3, 1, 7, 5, 5, 6, 3, 9, 9, 7,
+      7, 7, 1, 9, 0, 0, 6, 3, 3, 6, 9, 0, 5, 8, 8, 8, 1, 2, 5, 1, 7, 4, 6, 8, 3,
+      
+      8, 6, 0, 4, 3, 3, 6, 1, 5, 6, 1, 5, 9, 9, 7, 9, 7, 3, 5, 4, 1, 4, 8, 5, 2,
+      4, 1, 8, 5, 0, 0, 9, 9, 2, 3, 4, 3, 3, 4, 4, 5, 1, 2, 1, 1, 8, 3, 2, 0, 2,
+      4, 4, 4, 0, 0, 2, 8, 4, 9, 2, 8, 0, 1, 9, 8, 6, 3, 7, 5, 6, 7, 1, 1, 8, 1,
+      3, 2, 2, 1, 7
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+black_d10_df$result[black_d10_df$result == 0] <- 10
+
+plot_result(black_d10_df, set_fill_map["black"])
+```
+
+
+```{r black-dpct}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[3] & dice_setup$die == dice[5], "sample_size"] / 25
+
+`black_d%_df` <- # want: 705 rolls
+  data.frame(
+    set = sets[3],
+    die = dice[5],
+    result = c( # 25 per full row ; storing tens value then multiplying by 10
+      2, 4, 5, 0, 8, 1, 3, 5, 7, 2, 0, 1, 0, 3, 2, 9, 2, 1, 1, 7, 8, 6, 2, 2, 6,
+      8, 2, 0, 8, 5, 3, 4, 3, 0, 1, 1, 9, 1, 0, 9, 8, 9, 5, 9, 8, 2, 8, 6, 9, 9,
+      1, 6, 4, 5, 2, 7, 3, 8, 5, 0, 3, 8, 1, 8, 2, 3, 4, 5, 6, 0, 4, 7, 9, 9, 1,
+      9, 0, 0, 0, 2, 9, 4, 9, 0, 7, 9, 3, 3, 6, 3, 8, 1, 7, 3, 5, 5, 7, 0, 3, 3,
+      2, 7, 7, 7, 4, 3, 5, 3, 4, 7, 8, 5, 0, 1, 2, 2, 2, 3, 3, 9, 1, 1, 9, 6, 2,
+      
+      4, 6, 2, 5, 0, 9, 2, 1, 0, 5, 8, 5, 0, 5, 8, 2, 1, 6, 0, 1, 9, 0, 3, 3, 1,
+      6, 7, 9, 3, 0, 7, 4, 5, 1, 1, 2, 5, 4, 9, 0, 8, 3, 1, 8, 8, 1, 7, 8, 4, 4,
+      3, 1, 9, 7, 7, 5, 8, 3, 2, 6, 4, 6, 4, 7, 8, 0, 1, 4, 3, 7, 1, 2, 7, 4, 9,
+      2, 6, 3, 8, 6, 0, 9, 6, 1, 5, 8, 6, 6, 3, 9, 9, 4, 9, 3, 8, 6, 4, 1, 7, 2,
+      9, 5, 9, 5, 0, 8, 4, 0, 4, 6, 9, 9, 8, 8, 6, 7, 0, 0, 5, 2, 5, 1, 7, 5, 1,
+      
+      1, 6, 5, 0, 8, 3, 8, 1, 6, 2, 7, 1, 7, 9, 8, 0, 7, 4, 9, 0, 2, 3, 6, 5, 4,
+      7, 6, 8, 1, 0, 5, 0, 2, 2, 3, 7, 6, 7, 4, 2, 1, 2, 6, 3, 4, 4, 2, 4, 8, 0,
+      9, 7, 3, 8, 8, 7, 1, 2, 5, 2, 0, 2, 2, 0, 8, 3, 6, 4, 1, 3, 5, 6, 5, 3, 8,
+      6, 7, 8, 0, 4, 2, 4, 7, 1, 6, 3, 2, 1, 3, 4, 8, 8, 6, 8, 0, 9, 6, 9, 0, 8,
+      4, 4, 0, 8, 1, 4, 2, 2, 7, 8, 0, 8, 5, 2, 1, 8, 7, 8, 7, 2, 2, 5, 9, 8, 2,
+      
+      9, 6, 0, 4, 3, 2, 6, 0, 3, 8, 2, 4, 2, 8, 7, 9, 8, 8, 4, 6, 6, 5, 1, 2, 3,
+      5, 3, 7, 3, 2, 9, 1, 4, 7, 3, 4, 6, 9, 2, 4, 7, 8, 5, 6, 3, 2, 3, 2, 8, 0,
+      2, 0, 5, 0, 3, 9, 7, 7, 3, 1, 8, 4, 8, 1, 9, 2, 3, 7, 5, 3, 7, 0, 0, 2, 5,
+      0, 0, 5, 4, 1, 7, 1, 4, 5, 0, 1, 4, 0, 6, 2, 0, 2, 5, 2, 8, 3, 4, 3, 5, 2,
+      7, 6, 7, 1, 6, 7, 0, 1, 0, 0, 7, 5, 1, 0, 7, 0, 4, 9, 2, 1, 1, 5, 3, 2, 3,
+      
+      9, 8, 2, 9, 3, 4, 6, 8, 4, 0, 3, 4, 1, 1, 5, 4, 0, 6, 2, 4, 0, 0, 8, 7, 8,
+      0, 7, 0, 4, 3, 1, 0, 1, 4, 6, 6, 4, 2, 7, 0, 5, 7, 3, 2, 3, 6, 2, 6, 1, 8,
+      3, 7, 7, 0, 8, 4, 7, 9, 7, 2, 3, 5, 9, 7, 7, 7, 9, 6, 8, 3, 6, 5, 2, 9, 9,
+      3, 5, 5, 9, 6, 4, 4, 2, 4, 2, 6, 9, 5, 1, 0, 9, 8, 8, 5, 7, 7, 8, 2, 2, 3,
+      3, 3, 2, 5, 7, 7, 3, 0, 2, 2, 0, 8, 4, 3, 3, 5, 5, 5, 3, 2, 9, 9, 3, 9, 3,
+      
+      1, 2, 4, 8, 7, 1, 6, 5, 4, 6, 8, 6, 8, 1, 0, 6, 6, 8, 2, 7, 1, 1, 7, 2, 9,
+      3, 5, 2, 1, 0, 7, 4, 0, 1, 4, 9, 0, 6, 0, 7, 8, 2, 1, 1, 5, 2, 8, 3, 3, 4,
+      7, 6, 6, 5, 3, 6, 1, 3, 8, 3, 7, 7, 2, 4, 4, 3, 6, 2, 3, 0, 3, 4, 6, 8, 6,
+      2, 3, 2, 6, 8
+    )
+  ) %>% 
+  mutate(result = result * 10,
+         obs = 1:nrow(.))
+
+plot_result(`black_d%_df`, set_fill_map["black"])
+```
+
+
+```{r black-d12}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[3] & dice_setup$die == dice[6], "sample_size"] / 19
+
+black_d12_df <- # want: 908 rolls
+  data.frame(
+    set = sets[3],
+    die = dice[6],
+    result = c( # 19 per full row
+      1, 10, 12,  2,  1,  6,  5,  6,  9, 12,  4,  6,  8,  6, 11, 10,  7, 10,  8,
+      2, 11, 11,  6,  5,  4,  3,  8, 12,  6, 12, 12,  3,  2, 12,  8, 10,  9,  5,
+      7,  4,  3,  9,  1,  5, 10,  8,  3,  7,  2,  4,  6, 10,  4,  8,  5,  5,  6,
+      2,  9,  3,  4,  6, 10,  2, 11,  7,  5,  3, 10, 10,  8,  8, 11, 12, 10,  9,
+     10,  9,  3,  2,  3,  2,  6,  4,  7,  8, 12, 10,  7, 12,  1,  3,  7,  3, 11,
+     
+      8,  1,  8,  5, 11,  3,  9,  4,  9,  4, 12,  3,  9,  9,  8, 11,  9, 11,  1,
+      6,  6,  2, 10, 11,  3,  9,  4, 11,  3,  6, 10,  2,  9,  2,  6,  5,  7,  9,
+     11,  5,  5,  5,  8,  8,  6,  7,  8,  2,  8,  2,  5,  5,  7,  2,  9,  7,  1,
+     12,  8,  9,  7,  1, 12, 10, 11,  4, 10, 11, 12,  7, 11,  4, 10,  2,  7,  5,
+      8,  8,  1,  8, 11,  1,  1,  4,  9,  3,  4,  3,  6,  8,  2,  1,  7,  5, 12,
+     
+      5,  2,  9,  3,  4,  9, 11,  5, 10,  3, 11,  5,  6,  8,  3,  9,  2,  5, 11,
+     12, 11,  2,  4,  9,  9,  3,  3,  3,  1,  7,  6,  5, 10,  3,  7,  9,  1,  3,
+      5,  2,  6,  5,  3, 12,  1,  6,  5, 10,  4,  1, 10,  5,  6,  5,  6, 10, 10,
+      5,  9,  1,  8,  5,  7,  7,  6,  2,  5, 10, 11,  8, 11, 12, 10,  7, 10,  2,
+      1,  8,  2,  9,  2,  2,  4,  7, 12,  6,  5, 10,  1, 11,  5,  1,  3,  6, 12,
+     
+      8,  2,  6,  7,  3, 10,  1,  5,  9,  2,  8,  2, 11,  5,  2,  4, 11,  1,  4,
+      3, 10,  6, 11,  9, 12,  3,  9,  9,  6, 11,  3,  4,  4,  4,  3,  3,  2,  8,
+      7, 12,  9,  6,  3,  9,  6, 10, 12,  6, 12,  6,  3,  3,  4,  3, 11,  3,  6,
+      6, 10,  2,  2, 12,  6,  8,  2, 10, 11,  7,  8, 12,  4, 10,  3, 10,  8,  1,
+      2,  1, 11, 10,  4,  5, 10,  9, 10,  3,  8,  4, 10,  7, 11,  8,  6,  8,  1,
+     
+      2,  7,  7,  9,  4, 11,  6,  7,  3,  3,  2,  6,  2,  2,  7,  4,  5, 11,  1,
+      6,  3,  1,  7,  7,  1,  5,  7,  2,  4,  6,  7,  6, 11,  4,  8, 12,  4,  6,
+      7,  7,  2,  1, 12,  3,  3,  1, 11,  1,  7, 11,  5,  2, 10,  9,  4,  3,  6,
+      9,  8,  8, 10,  5, 12,  2,  6, 10,  9,  1,  9,  2,  9,  1, 10,  2,  9,  7,
+      9,  4,  6,  1,  1,  9,  8, 11,  5, 11, 12, 11,  2, 12,  6, 12,  9, 11,  6,
+     
+      6,  9,  5,  5,  3,  2,  8, 11,  6, 11,  7,  9, 12, 11,  1,  8,  9,  9,  8,
+      6,  7,  6,  6,  1, 10, 10, 12,  5,  5, 10, 11,  3, 11,  6,  7,  1,  6,  7,
+      8,  7,  2,  1,  6,  3,  8, 10,  4, 10, 10, 11,  2,  8,  4, 12,  9,  7,  1,
+     12,  2,  2,  6,  4, 10,  7, 12,  8, 11,  2,  9, 10,  9,  9,  1,  5,  3,  9,
+      2,  1,  8,  6,  4,  5,  8,  8,  4,  2, 10,  7,  3,  6, 10,  6,  9,  3,  4,
+     
+      4,  9, 10,  9,  8, 10,  6,  8,  4,  3, 12, 10,  9,  4, 12, 10, 11,  4,  9,
+      5,  9, 11,  4, 12,  1, 10,  8,  4,  4, 11,  6,  2, 11,  7, 10, 12,  1, 11,
+      2, 12, 10, 10,  9,  2, 11, 11, 10,  7, 10,  6,  1,  6, 12, 12,  7,  8, 12,
+     12,  7,  4,  1,  3,  3, 10, 11,  5,  3,  6, 12,  6, 10,  3, 10, 10,  6,  6,
+     10,  9,  2,  7,  1,  8, 10,  2,  4, 12,  7,  3,  2,  7, 10,  7,  6, 11,  5,
+     
+      2,  1,  5,  8, 10,  3, 10,  3, 11,  4,  5, 12,  8,  8, 12,  9,  3, 11,  6,
+      2, 12,  8,  4, 12,  4,  4,  4,  8,  4,  2, 10,  2,  9, 12,  4,  7,  4,  6,
+      4,  6,  5,  7, 11,  9,  9,  6,  2, 12,  1,  4, 11,  6, 12,  1,  3,  7,  4,
+      1,  6, 12, 10,  5, 12,  7,  9,  9,  3,  1,  6, 11,  8, 12, 11,  4,  6,  3,
+      6,  9, 11,  5, 12,  9, 10,  9,  1, 12,  7,  7,  6,  9,  2,  7, 11,  3,  2,
+     
+      1, 11,  3,  5,  4, 11,  4,  9,  5,  2,  8,  5,  6, 10, 10,  3,  9,  2,  7,
+     10,  9,  2,  2,  5,  5,  2,  5,  1,  9, 10,  6,  3,  1,  6,  3,  2, 10,  7,
+     10,  1, 11,  3, 10,  9,  9,  7,  1, 11,  3, 12,  9,  8,  8,  2,  3,  9,  3, 
+      9,  1,  9,  8, 10,  7,  8,  1,  2,  4,  5,  6, 12,  6,  1,  2,  3,  6,  8,
+     10,  7, 12,  8,  8,  2,  3, 10,  4,  1,  3,  7,  5, 11, 12,  2,  9,  9, 12,
+     
+     10,  9,  1,  4, 10, 10,  4,  8, 11,  9,  8,  7,  7, 10,  2,  2,  7,  2,  7,
+     10,  2,  2, 12,  7, 10,  9,  6,  3, 12,  5,  5,  6, 11,  8,  9,  7,  5,  7,
+     10, 12,  8,  3, 12,  6,  7,  8, 12,  4,  2, 11,  2,  7,  3
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(black_d12_df, set_fill_map["black"])
+```
+
+
+```{r black-d20}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[3] & dice_setup$die == dice[7], "sample_size"] / 19
+
+black_d20_df <- # want: 1851 rolls
+  data.frame(
+    set = sets[3],
+    die = dice[7],
+    result = c( # 19 per full row
+     18, 17,  1,  4,  9,  6,  1,  9,  2,  4,  7,  2, 10,  3, 18,  5, 11,  5,  7,
+      5, 15, 15, 10, 10,  5, 12, 10, 13,  7,  3,  4,  5,  2, 17, 16, 17,  5, 10,
+     11,  1, 13, 12,  3, 19,  3, 17,  3,  6,  4, 10, 11,  4, 15,  6, 13,  2,  2,
+     11,  9, 15,  4,  6, 13, 11,  5,  1,  1,  5, 11, 11, 17,  3, 12, 11, 19, 19,
+      8, 17,  2, 14, 19, 17,  5,  9, 20, 12, 18,  2,  9, 18,  2, 14,  4,  6,  3, 
+      
+      8, 12,  3,  1, 14,  2, 20,  2,  3, 16,  7, 16, 16, 13,  7, 18, 15,  9, 18,
+      2,  9, 14,  1,  8, 17,  7, 14,  8,  9,  6, 10, 12,  4, 15, 17, 17, 17,  6,
+     19,  7, 10, 11,  1,  1,  5,  3, 19,  4, 17, 20,  4,  3,  5,  5,  7,  2,  6,
+     19,  6, 17, 14, 15,  9, 11, 20, 14,  2, 19, 12, 16,  5, 17, 15,  9,  1, 12,
+      9,  4,  6, 11, 20,  3, 14,  8, 15,  5,  9, 11, 10,  6,  5, 11, 16, 10,  1,
+     
+      1, 19,  8,  6, 17, 18, 18, 19, 16, 11,  3, 20, 17, 14, 16,  1, 16, 18,  5,
+      8,  2,  6,  9,  6,  7,  3, 11,  4, 17, 16,  4, 16,  3, 20,  4, 10, 10, 19,
+     17,  3, 20,  9, 12,  1, 14, 14, 18,  4,  2,  4, 11,  4,  9,  6, 18,  4,  7,
+     19,  3,  8,  5,  4, 11, 18, 11, 18, 17,  6, 20,  4, 16, 15, 14,  5, 14,  2,
+     12,  9, 20, 12, 17, 17,  1, 15, 15, 12,  4,  8,  3, 19,  2,  6,  5,  6,  9,
+     
+      9, 18, 18, 15, 12, 13, 10,  4, 18, 15,  7, 20, 10,  1, 10, 11, 13,  8, 15,
+     16,  5, 10,  5, 17, 17,  7, 18, 19, 12,  9,  4,  4,  4,  9,  2, 18,  2,  6,
+     14, 14, 15, 19, 19,  1, 11, 17, 10,  6,  6, 17, 10, 12, 11,  2,  3, 14, 17,
+     12, 20, 20,  2,  3, 17, 10, 12,  4,  1,  5, 14, 15,  4, 16, 14, 20, 11, 15,
+     18,  8,  6, 19,  4,  9, 16,  1, 10, 11,  1,  9,  8, 10,  8, 20, 10,  8, 11,
+     
+     11,  9,  2, 13,  9,  6, 16, 10, 17,  6,  2, 13, 15, 13,  5, 13,  8,  9,  8,
+      5, 19, 12, 17, 13,  1, 18,  3,  3, 10, 13, 13, 13,  2, 14,  2, 19,  1, 19,
+      8,  1,  3,  7, 14,  1, 20, 15, 14, 19, 12, 13, 11,  4, 15,  3, 19,  7,  8,
+      6, 14, 18, 13, 10,  6,  1,  9,  3, 20, 10,  9, 18, 13,  4,  5,  1, 18, 11,
+     16, 11, 12, 13, 18,  6, 16,  9, 18,  3,  9, 14, 20,  9, 13,  2,  5,  5, 12,
+     
+      2, 17,  4, 12,  9,  6, 18, 12,  9, 10,  5,  4,  7, 17, 16,  3, 13,  6,  9,
+      2,  3, 12,  5, 11,  8, 15, 17,  2, 15, 17, 20, 19, 13,  6, 16,  6,  4,  5,
+      9, 12,  9, 18, 18, 12, 16, 20, 11,  3, 19, 17,  6, 18, 15, 19,  9,  5,  5,
+      4,  3, 10, 14, 11, 18,  2, 10,  2,  7,  6, 15, 15, 18,  8, 19, 11, 17, 20,
+     12,  1, 14, 15,  4,  5,  4, 10,  3, 14,  8, 10, 16,  8,  8, 13,  9, 17, 13,
+     
+     17, 16, 13, 13,  5,  3,  4, 12, 13,  5, 17,  5, 10,  2,  4, 19, 10, 11,  8,
+     16,  3, 11,  4, 18, 12,  2,  4, 17,  9,  2,  9, 20, 16, 16, 14, 14,  2, 15,
+      4, 17,  4,  2,  4, 10,  9,  9,  9,  8,  8,  4,  3,  8, 15, 13, 16, 14,  5,
+     19, 13,  5,  7, 13,  5,  3,  8,  5, 12, 13,  4, 20,  4,  6, 18, 15, 16,  6,
+      2,  9,  9,  9, 19,  3,  8, 14,  9, 11, 15, 15,  4,  4,  3, 15, 11, 10,  8, 
+     
+      1,  5, 16,  3, 16,  5, 10,  7, 19, 13,  3, 12,  9,  3,  8, 16,  3, 19,  6,
+     11,  9, 20,  7,  8, 10, 17, 18,  6, 10,  3,  3, 12, 14, 16, 11, 12,  6, 11,
+      4,  8,  5,  3, 18,  8,  4, 12, 13,  8,  3, 20, 19, 19,  4,  2, 16, 13, 13,
+     11,  7,  1, 17,  1, 19,  8, 18, 20,  9,  2,  5, 20,  7, 20,  6,  3, 16,  6,
+      9, 17,  7, 15,  6, 14,  7,  4,  1, 20, 17,  2,  3,  1, 15, 14, 10,  1, 15,
+     
+      9,  6, 18, 14, 13, 10, 11, 20,  6,  9, 13, 10, 14, 15, 15, 14,  7, 20,  5,
+     12,  5,  8,  6, 14,  6,  5, 12,  9,  2,  3, 17, 20, 17,  8,  8, 11,  7,  4,
+      1,  8, 19,  6, 12, 18, 15,  3,  7,  2, 13, 18,  2, 15,  6, 12,  9,  4, 18,
+     20, 14, 17,  9, 16, 10, 10,  6, 15, 19,  9,  1,  9,  6, 12,  9,  4,  9,  2,
+      6, 12, 16, 19, 20,  3,  4,  9,  4, 12,  5,  8,  8,  8, 13,  8, 13, 16, 17,
+     
+     20,  5, 20, 17, 19,  6, 17, 18, 17, 14, 13,  3,  3,  3,  7, 10, 15, 15, 10,
+     20, 16, 15,  1, 11, 17, 16,  6, 10,  3,  6,  8, 17,  7,  4, 14, 11,  1, 12,
+      8, 16, 18, 16, 18,  6,  3,  6,  3,  6,  2, 13,  3,  9,  1,  4, 19,  2, 12,
+     11, 17, 12, 10, 12,  5, 10, 11,  3,  5,  3,  4,  6,  6, 18, 15,  2,  6,  1,
+      9,  4,  3,  5, 12, 15, 11,  6, 14,  5,  3, 18, 17,  2,  1, 18,  9,  2, 19,
+     
+     18,  9, 16,  2,  1, 15, 12, 10,  6,  5,  9, 16, 10, 19, 10,  5, 18,  2,  3,
+      3, 18, 15, 14,  1, 16,  7, 20,  5,  2, 16, 20, 12,  3, 12,  9,  6, 18,  7,
+     13,  6,  5,  1, 13,  9,  6, 10, 13,  6,  4, 10, 11,  5, 16,  2,  4, 10,  9,
+     16,  9,  2, 15,  9, 17,  2,  2,  6,  2, 11, 13, 10,  7, 10, 14,  7, 14, 14,
+      3,  3,  6, 17, 15,  5,  8, 11,  3, 15,  6,  6, 20,  7,  6,  9, 18, 13,  9,
+     
+     10,  1,  2,  6,  4, 17,  6,  4,  4,  8,  4,  9, 17, 10,  9,  5,  1, 18,  5,
+      6,  5, 13, 13, 16, 13,  5, 13,  9,  9,  5, 14, 11,  9, 15, 11, 20, 10,  2,
+      5, 10,  6,  7,  3,  5,  1, 17,  8, 20,  5,  9,  8, 12,  9, 16, 15, 12, 18,
+      6, 10, 14,  3,  3, 16,  7,  5,  6,  5, 17,  8,  4, 10, 14, 19,  1, 18, 14,
+      5, 16, 15, 13,  4,  8, 20, 17, 13, 19,  3,  2,  7,  8, 10, 18, 16, 12, 17,
+     
+     20, 12,  4,  3, 17,  6, 17, 12, 20,  9,  7,  4,  6,  9, 18,  8, 10, 20, 14,
+      2, 18,  7,  1, 14, 19,  3, 14,  1,  6, 12, 12,  4, 10,  9, 18,  5, 11,  4,
+      7, 12, 13,  3, 15,  2, 12, 19,  6, 11, 12,  2,  4,  9,  2,  8,  2, 20,  4,
+     18,  1, 16, 19, 20, 13, 18,  3, 15,  2, 13,  1, 16, 18, 10, 15,  8, 13, 13,
+     11,  7,  2, 16, 19,  5, 11, 14,  2,  9,  3, 12,  6, 12,  5,  7, 18, 16,  8,
+     
+     18, 12, 15, 11, 12, 12, 13,  7,  6, 18,  6,  9,  2, 13, 20,  6,  9, 19,  8,
+     13, 11, 18, 13,  6,  6, 13,  3,  8, 12, 20, 19,  3, 12,  3, 18,  3, 10,  5,
+      1, 10,  2, 18,  6,  5,  9, 11,  6,  3, 18, 17,  4, 17, 17, 14,  4,  5, 13,
+     18, 17,  4,  5, 19, 18, 17,  5,  2,  3,  9,  2, 15, 11,  9, 18,  6,  2, 20,
+     18, 12,  7,  6,  3, 20,  3, 20,  7, 17,  3,  2, 16, 20, 13,  2, 17, 18, 11,
+     
+      6, 14,  3, 19,  8, 10,  5,  6,  5,  7, 11, 18,  7,  6, 12, 11, 17,  9, 16,
+     11, 16, 16,  4,  9,  4,  1, 10, 18,  6, 16, 19, 10, 11, 12, 16,  8, 15, 17,
+      3,  4, 15,  9,  4,  9,  7, 18,  9, 13, 11, 16, 15, 15, 18, 14,  6, 16, 16,
+      2, 15, 18,  3,  5,  7, 16, 20,  8, 12,  6,  8, 18, 16, 16,  1, 16,  4,  9,
+     19, 14, 15, 10, 19,  8,  5,  9, 11,  4, 14,  9,  1, 20,  9,  6,  7,  5, 17,
+     
+      2, 17, 17,  4,  8,  9, 16,  1, 12,  8,  7, 14,  9, 11, 19, 11, 14, 18, 16,
+     11,  3,  4,  4, 10, 10, 15,  7,  5, 10, 11, 18,  6,  7,  9,  3, 10,  4,  3,
+      8,  9, 19, 15,  9, 20,  3, 15,  5, 10,  2,  5,  1,  4,  1, 11, 16, 16, 10,
+      1, 12, 10, 13, 17, 11,  4,  5,  7,  1, 18,  5, 17,  4, 18, 16,  6, 19,  9,
+     14, 11, 11, 17, 17, 20, 14, 19, 12,  3,  8, 17, 17, 19, 14, 18,  2, 20, 19,
+     
+      9,  4, 12,  2, 10, 17, 11,  4, 12, 13, 15,  2,  6,  9, 13,  6,  5,  5, 12,
+      9, 20, 16,  6, 11, 17, 19, 16, 17,  5, 16, 12,  7, 14,  5, 10, 15,  5, 17,
+     15, 16,  5,  6,  9,  3, 11,  3,  9, 19, 16, 17, 14,  5, 16,  5, 17, 12, 18,
+     19,  6,  9, 13, 11, 16,  5,  6, 18, 18,  6,  5,  8, 19, 13, 18,  5, 19,  2,
+     10, 18, 15, 11,  2,  8, 14, 13, 10,  4,  9,  5,  6, 15,  9,  1,  3,  9, 19,
+     
+     11, 19, 19,  6, 17,  4, 16,  8,  6,  2,  4, 16, 19, 17,  6,  9, 11, 16, 10,
+      3, 14,  4,  2, 18,  4, 16,  8,  6, 11, 19,  3,  6, 18, 17, 19, 10, 10, 17,
+     19,  7, 14,  2,  4, 17, 10,  3,  5,  9, 14, 16,  3, 13, 18, 10, 19, 14, 15,
+      2,  4,  6,  1, 14, 15, 20, 15,  9,  1,  9,  3, 17, 14, 20,  6,  4,  6,  6,
+      2,  1,  9, 11,  9, 17, 12,  3, 12,  2,  6, 17, 20,  5,  1, 16,  9,  2, 11,
+     
+      3, 20,  5, 15, 12,  1, 20, 13, 18, 18, 12, 10,  9,  4,  9, 18, 14, 14, 14,
+      3, 10, 16, 13,  5, 18, 13, 17,  6, 15,  7,  8,  9,  8, 11, 19, 12,  9,  9,
+     14, 18, 16,  1, 15,  2,  9,  4,  6, 18, 17, 17,  5,  3,  5,  5, 10, 10,  1,
+     18, 17, 15, 15,  5, 12, 11, 10,  8, 12, 11, 18, 20,  4, 11,  3,  1,  1, 15,
+     17, 17,  9,  6,  6,  5, 12, 17, 15, 11,  6, 18,  5,  6,  9, 14, 16,  4, 13,
+     
+      5, 18, 18, 19, 10,  9,  3,  7,  9,  2, 10, 12,  5,  8,  5, 13, 11, 11, 10,
+      9, 10,  2,  5, 10,  4,  3, 12, 19, 16, 14,  9, 15,  1,  7, 10, 13,  9, 17,
+     11,  1, 16, 12,  8, 10, 14,  6
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(black_d20_df, set_fill_map["black"])
+```
+
+### Green Dice
+
+```{r green-d4}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[4] & dice_setup$die == dice[1], "sample_size"] / 25
+
+green_d4_df <- # want: 197 rolls
+  data.frame(
+    set = sets[4],
+    die = dice[1],
+    result = c( # 25 per full row
+      2, 4, 3, 3, 4, 2, 3, 4, 1, 3, 4, 2, 1, 2, 3, 4, 3, 2, 2, 2, 4, 2, 4, 4, 1,
+      4, 1, 2, 4, 4, 1, 2, 4, 3, 2, 2, 3, 3, 4, 2, 4, 4, 2, 4, 3, 1, 4, 3, 1, 2,
+      1, 1, 3, 1, 1, 1, 2, 3, 1, 3, 3, 4, 3, 2, 4, 1, 1, 2, 1, 4, 1, 1, 1, 3, 3,
+      1, 2, 4, 3, 1, 3, 4, 1, 4, 2, 1, 3, 2, 2, 1, 3, 4, 3, 1, 3, 4, 1, 4, 3, 4, 
+      2, 3, 2, 2, 4, 2, 3, 4, 1, 4, 1, 2, 2, 3, 3, 4, 4, 4, 4, 2, 4, 1, 4, 1, 2,
+      
+      2, 4, 3, 1, 4, 4, 3, 4, 3, 3, 4, 1, 2, 2, 2, 3, 3, 4, 2, 2, 4, 4, 1, 1, 4,
+      1, 2, 4, 2, 4, 3, 3, 1, 2, 1, 3, 1, 4, 1, 2, 4, 4, 4, 1, 1, 4, 1, 3, 4, 2,
+      1, 4, 2, 3, 2, 3, 3, 4, 2, 1, 3, 1, 3, 2, 1, 4, 2, 2, 4, 2, 3, 2
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(green_d4_df, set_fill_map["green"])
+```
+
+
+```{r green-d6}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[4] & dice_setup$die == dice[2], "sample_size"] / 25
+
+green_d6_df <- # want: 347 rolls
+  data.frame(
+    set = sets[4],
+    die = dice[2],
+    result = c( # 25 per full row
+      4, 1, 5, 3, 2, 3, 2, 4, 6, 1, 4, 5, 5, 4, 1, 5, 4, 3, 1, 2, 5, 3, 6, 5, 3,
+      3, 6, 4, 6, 6, 3, 5, 2, 5, 2, 2, 2, 6, 3, 2, 5, 5, 1, 3, 4, 2, 6, 6, 3, 4,
+      1, 2, 5, 2, 2, 3, 5, 5, 4, 5, 4, 6, 5, 4, 3, 6, 4, 5, 1, 2, 5, 4, 2, 1, 5,
+      6, 6, 6, 4, 5, 4, 6, 1, 2, 3, 4, 3, 3, 5, 2, 3, 1, 4, 3, 4, 5, 4, 1, 2, 5,
+      5, 3, 4, 2, 2, 4, 6, 1, 1, 6, 2, 5, 6, 1, 2, 2, 6, 3, 6, 4, 4, 6, 4, 6, 1, 
+      
+      1, 3, 4, 3, 4, 6, 3, 1, 5, 6, 6, 5, 6, 1, 3, 5, 4, 5, 6, 4, 2, 6, 1, 3, 4,
+      2, 3, 3, 6, 4, 2, 3, 2, 6, 3, 2, 5, 5, 2, 2, 5, 3, 4, 6, 5, 6, 6, 3, 4, 5,
+      4, 5, 2, 6, 5, 4, 6, 1, 5, 1, 5, 1, 4, 5, 2, 1, 1, 5, 3, 5, 5, 6, 5, 5, 6,
+      6, 2, 5, 5, 1, 5, 2, 5, 5, 3, 3, 4, 1, 2, 1, 1, 3, 1, 2, 4, 2, 5, 4, 5, 5,
+      6, 4, 3, 6, 5, 1, 6, 6, 4, 6, 5, 4, 2, 1, 2, 3, 2, 5, 3, 6, 1, 5, 2, 2, 2,
+      
+      1, 2, 4, 4, 6, 1, 2, 5, 1, 5, 2, 5, 5, 4, 3, 6, 3, 6, 1, 6, 1, 4, 3, 1, 4,
+      3, 1, 6, 5, 4, 1, 2, 6, 2, 2, 6, 4, 2, 1, 5, 1, 1, 6, 6, 6, 2, 1, 5, 2, 6,
+      3, 6, 6, 3, 2, 5, 4, 3, 2, 6, 4, 2, 5, 2, 6, 3, 1, 3, 5, 1, 1, 3, 5, 4, 2,
+      5, 3, 1, 1, 6, 3, 5, 6, 6, 2, 4, 3, 4, 1, 1, 1, 3, 1, 2, 6, 2, 1
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(green_d6_df, set_fill_map["green"])
+```
+
+
+```{r green-d8}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[4] & dice_setup$die == dice[3], "sample_size"] / 25
+
+green_d8_df <- # want: 517 rolls
+  data.frame(
+    set = sets[4],
+    die = dice[3],
+    result = c( # 25 per full row
+      8, 5, 5, 1, 5, 4, 8, 3, 1, 5, 5, 2, 4, 4, 8, 6, 1, 7, 2, 2, 8, 6, 6, 1, 8,
+      1, 6, 7, 7, 8, 2, 2, 8, 2, 8, 2, 3, 4, 1, 7, 8, 5, 8, 5, 2, 4, 8, 2, 4, 1,
+      2, 8, 5, 2, 5, 1, 6, 2, 4, 2, 4, 4, 7, 2, 1, 8, 4, 6, 3, 5, 2, 6, 4, 2, 5,
+      6, 4, 8, 1, 2, 2, 8, 1, 3, 1, 6, 8, 4, 8, 2, 1, 6, 4, 4, 4, 4, 8, 6, 3, 8,
+      6, 5, 2, 3, 5, 1, 4, 5, 2, 7, 6, 6, 2, 4, 4, 6, 4, 7, 2, 4, 8, 6, 1, 1, 5,
+      
+      4, 4, 4, 8, 2, 1, 3, 5, 1, 8, 4, 3, 6, 6, 6, 6, 6, 3, 7, 7, 5, 4, 4, 5, 5,
+      3, 6, 2, 2, 8, 2, 3, 7, 6, 7, 8, 7, 8, 1, 1, 3, 8, 1, 1, 1, 5, 8, 6, 8, 4,
+      5, 2, 8, 6, 5, 5, 3, 1, 4, 5, 8, 3, 5, 8, 5, 1, 3, 3, 2, 3, 1, 4, 1, 8, 3,
+      6, 1, 4, 2, 7, 4, 5, 7, 7, 5, 7, 6, 4, 3, 6, 6, 6, 8, 4, 2, 6, 4, 8, 2, 4,
+      7, 4, 6, 2, 1, 5, 8, 6, 1, 3, 3, 6, 3, 5, 1, 3, 6, 6, 8, 3, 8, 6, 5, 3, 6,
+      
+      5, 1, 1, 2, 7, 7, 4, 5, 8, 4, 2, 6, 2, 1, 5, 2, 2, 3, 1, 5, 8, 2, 3, 2, 8,
+      8, 5, 8, 2, 4, 2, 5, 6, 6, 5, 8, 2, 4, 2, 3, 8, 1, 5, 4, 5, 4, 3, 7, 2, 3,
+      3, 4, 7, 4, 1, 2, 5, 8, 6, 6, 2, 6, 2, 8, 7, 4, 6, 8, 7, 2, 3, 6, 8, 2, 1,
+      6, 6, 8, 1, 8, 6, 5, 7, 4, 3, 7, 1, 3, 7, 2, 8, 2, 2, 8, 5, 2, 8, 6, 1, 8,
+      5, 4, 1, 8, 6, 8, 8, 5, 5, 5, 7, 8, 2, 2, 4, 3, 8, 1, 7, 8, 3, 4, 6, 5, 3,
+      
+      7, 4, 4, 6, 1, 3, 6, 1, 5, 2, 4, 6, 5, 6, 8, 2, 6, 8, 2, 8, 5, 1, 7, 3, 1,
+      4, 6, 5, 6, 3, 4, 7, 7, 6, 8, 3, 8, 6, 8, 3, 7, 6, 6, 8, 4, 6, 3, 5, 2, 2,
+      5, 3, 3, 3, 4, 8, 3, 6, 4, 1, 4, 6, 4, 6, 6, 8, 6, 6, 5, 3, 4, 5, 3, 3, 7,
+      7, 1, 6, 7, 6, 5, 1, 4, 7, 7, 1, 3, 2, 6, 3, 3, 5, 6, 7, 8, 5, 7, 3, 5, 8,
+      1, 5, 2, 5, 6, 2, 5, 6, 6, 6, 5, 1, 2, 3, 5, 4, 2, 3, 7, 6, 2, 3, 2, 4, 4,
+      
+      8, 8, 3, 7, 8, 1, 8, 2, 3, 7, 3, 6, 5, 8, 1, 7, 8
+      )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(green_d8_df, set_fill_map["green"])
+```
+
+
+```{r green-d10}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[4] & dice_setup$die == dice[4], "sample_size"] / 25
+
+green_d10_df <- # want: 705 rolls
+  data.frame(
+    set = sets[4],
+    die = dice[4],
+    result = c( # 25 per full row
+      5, 1, 9, 5, 8, 6, 1, 5, 0, 1, 8, 6, 9, 1, 3, 5, 3, 0, 3, 0, 0, 2, 5, 3, 2,
+      6, 7, 2, 8, 6, 0, 4, 6, 8, 3, 8, 6, 6, 7, 9, 0, 4, 9, 9, 2, 1, 3, 8, 7, 9,
+      1, 4, 8, 7, 1, 3, 0, 8, 5, 2, 2, 7, 1, 9, 5, 9, 2, 7, 4, 3, 9, 2, 7, 8, 3,
+      5, 4, 5, 5, 8, 1, 7, 8, 1, 6, 7, 4, 7, 9, 0, 7, 9, 0, 1, 8, 6, 0, 9, 7, 0,
+      8, 7, 9, 6, 5, 1, 5, 0, 3, 7, 4, 8, 3, 3, 5, 4, 7, 2, 6, 0, 3, 3, 7, 9, 9,
+      
+      7, 8, 7, 8, 1, 4, 0, 3, 6, 2, 9, 4, 0, 0, 3, 1, 9, 6, 3, 0, 5, 5, 6, 1, 4,
+      8, 4, 3, 6, 0, 2, 3, 0, 6, 1, 0, 1, 5, 5, 3, 8, 8, 6, 8, 2, 1, 4, 0, 3, 1,
+      4, 2, 6, 4, 2, 8, 9, 9, 3, 6, 9, 5, 0, 9, 0, 7, 8, 3, 2, 4, 2, 2, 5, 8, 2,
+      0, 7, 8, 5, 6, 3, 6, 5, 0, 0, 9, 0, 3, 2, 3, 2, 4, 9, 1, 6, 3, 7, 2, 5, 6,
+      8, 7, 9, 9, 8, 8, 6, 6, 2, 5, 2, 2, 4, 3, 0, 8, 3, 1, 8, 9, 5, 0, 0, 8, 2,
+      4, 2, 0, 6, 4, 0, 1, 5, 1, 5, 2, 1, 5, 0, 8, 5, 5, 3, 8, 7, 6, 2, 1, 3, 3, 
+      
+      1, 3, 3, 5, 1, 7, 0, 7, 4, 6, 7, 8, 2, 2, 6, 3, 5, 6, 1, 8, 8, 0, 6, 9, 3,
+      9, 9, 0, 2, 9, 5, 4, 3, 3, 4, 3, 3, 8, 9, 6, 1, 4, 1, 2, 9, 3, 1, 8, 3, 6,
+      9, 2, 5, 9, 3, 4, 2, 3, 5, 0, 5, 6, 3, 1, 0, 8, 5, 2, 1, 7, 9, 7, 2, 0, 8,
+      5, 0, 1, 5, 1, 9, 0, 0, 3, 1, 6, 6, 3, 9, 7, 7, 1, 2, 4, 4, 7, 6, 3, 1, 3,
+      1, 5, 1, 7, 5, 0, 7, 9, 8, 0, 1, 7, 2, 0, 4, 6, 9, 5, 7, 6, 6, 2, 8, 8, 8,
+      
+      9, 7, 6, 5, 9, 5, 4, 6, 5, 6, 2, 6, 4, 7, 3, 6, 7, 1, 1, 6, 4, 9, 6, 7, 4,
+      3, 9, 3, 2, 8, 1, 7, 1, 3, 1, 3, 1, 5, 0, 0, 3, 8, 2, 7, 1, 4, 1, 9, 6, 1,
+      9, 3, 6, 6, 6, 4, 4, 4, 8, 7, 8, 4, 9, 6, 5, 8, 0, 8, 1, 5, 1, 5, 4, 4, 6,
+      8, 3, 4, 8, 8, 9, 8, 9, 0, 7, 2, 5, 6, 9, 3, 7, 2, 6, 2, 0, 1, 2, 2, 3, 8,
+      5, 4, 7, 6, 0, 9, 6, 3, 4, 4, 6, 5, 8, 0, 6, 8, 4, 4, 4, 8, 3, 6, 6, 6, 5,
+      
+      0, 9, 6, 2, 6, 1, 7, 8, 9, 6, 1, 4, 2, 2, 1, 6, 8, 6, 9, 1, 7, 1, 2, 4, 6,
+      0, 5, 4, 3, 9, 0, 0, 5, 9, 0, 8, 2, 9, 2, 3, 7, 4, 2, 9, 3, 9, 4, 5, 7, 8,
+      4, 2, 8, 4, 8, 1, 1, 0, 0, 1, 0, 4, 6, 9, 1, 2, 2, 0, 5, 9, 2, 8, 0, 7, 9,
+      2, 8, 5, 4, 8, 0, 3, 7, 6, 3, 0, 0, 9, 5, 7, 1, 4, 7, 7, 6, 4, 3, 7, 8, 0,
+      7, 3, 0, 6, 8, 3, 6, 2, 9, 2, 3, 2, 6, 2, 3, 9, 6, 0, 9, 3, 3, 8, 9, 0, 6,
+      
+      9, 9, 5, 0, 5, 6, 3, 5, 6, 9, 3, 0, 0, 0, 0, 0, 2, 4, 0, 7, 3, 8, 8, 1, 7,
+      3, 4, 9, 8, 0, 7, 1, 4, 9, 7, 5, 0, 1, 2, 0, 3, 8, 8, 7, 3, 7, 3, 4, 9, 0,
+      9, 1, 9, 3, 2
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+green_d10_df$result[green_d10_df$result == 0] <- 10
+
+plot_result(green_d10_df, set_fill_map["green"])
+```
+
+
+```{r green-dpct}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[4] & dice_setup$die == dice[5], "sample_size"] / 25
+
+`green_d%_df` <- # want: 705 rolls
+  data.frame(
+    set = sets[4],
+    die = dice[5],
+    result = c( # 25 per full row
+      5, 5, 3, 2, 3, 2, 6, 0, 1, 9, 9, 4, 5, 6, 0, 5, 0, 3, 7, 2, 6, 4, 5, 5, 7,
+      7, 9, 1, 8, 7, 1, 0, 5, 5, 2, 5, 0, 9, 2, 5, 4, 5, 0, 5, 6, 3, 7, 8, 3, 8,
+      5, 7, 9, 0, 8, 5, 1, 3, 9, 3, 1, 9, 1, 7, 8, 3, 3, 3, 0, 8, 9, 0, 2, 2, 9,
+      5, 5, 2, 3, 7, 3, 8, 0, 4, 6, 5, 5, 0, 2, 0, 1, 5, 6, 0, 6, 2, 9, 1, 0, 0,
+      9, 2, 0, 1, 9, 0, 6, 6, 1, 0, 6, 7, 2, 1, 8, 6, 9, 9, 5, 6, 9, 5, 2, 3, 0,
+      
+      1, 2, 5, 5, 0, 8, 9, 4, 2, 2, 3, 9, 9, 1, 1, 0, 5, 2, 5, 2, 2, 4, 1, 2, 3,
+      0, 8, 8, 8, 5, 6, 0, 0, 6, 3, 1, 0, 1, 2, 3, 1, 4, 2, 8, 8, 3, 2, 5, 4, 2,
+      2, 7, 8, 1, 7, 1, 9, 7, 8, 1, 0, 4, 5, 9, 7, 2, 4, 2, 7, 9, 2, 5, 1, 5, 6,
+      6, 2, 2, 2, 6, 2, 5, 0, 1, 6, 8, 6, 4, 2, 3, 0, 0, 5, 5, 1, 6, 8, 6, 8, 4,
+      4, 9, 6, 7, 6, 1, 3, 4, 5, 6, 6, 8, 3, 1, 5, 2, 3, 8, 4, 5, 8, 1, 5, 1, 5,
+      
+      9, 0, 6, 5, 5, 4, 8, 7, 8, 8, 3, 6, 5, 9, 1, 2, 2, 8, 3, 9, 9, 4, 9, 7, 2,
+      4, 7, 5, 1, 7, 2, 5, 5, 6, 7, 5, 8, 5, 8, 1, 9, 1, 7, 5, 5, 7, 7, 9, 4, 3,
+      5, 0, 6, 8, 8, 9, 3, 5, 8, 3, 6, 8, 3, 7, 1, 0, 0, 2, 4, 0, 7, 3, 9, 3, 4,
+      5, 3, 0, 1, 8, 0, 5, 2, 1, 3, 2, 5, 5, 0, 8, 0, 4, 5, 6, 7, 8, 6, 2, 1, 0,
+      2, 3, 7, 9, 9, 4, 8, 7, 3, 8, 7, 6, 3, 2, 3, 4, 7, 6, 9, 5, 7, 3, 1, 9, 2,
+      
+      2, 1, 8, 8, 6, 8, 7, 6, 1, 9, 9, 5, 9, 9, 5, 4, 1, 6, 8, 8, 5, 2, 8, 7, 5, 
+      7, 5, 3, 1, 4, 2, 9, 5, 1, 9, 9, 5, 2, 2, 8, 3, 8, 5, 0, 4, 1, 5, 9, 0, 2,
+      9, 9, 8, 3, 4, 1, 4, 1, 2, 8, 7, 3, 6, 3, 4, 2, 0, 5, 2, 0, 1, 0, 4, 5, 2,
+      4, 8, 6, 1, 8, 8, 3, 7, 9, 0, 2, 7, 2, 1, 9, 2, 5, 8, 7, 9, 2, 6, 5, 8, 9,
+      8, 9, 9, 2, 7, 0, 7, 1, 4, 5, 2, 9, 1, 1, 1, 8, 6, 9, 2, 8, 5, 6, 1, 6, 7,
+      
+      5, 2, 6, 3, 2, 0, 6, 9, 3, 3, 9, 0, 3, 4, 3, 1, 3, 9, 5, 4, 5, 6, 9, 3, 2,
+      1, 4, 5, 2, 3, 8, 1, 1, 8, 1, 3, 4, 7, 6, 8, 2, 4, 7, 7, 5, 2, 4, 0, 5, 7,
+      3, 0, 3, 9, 5, 1, 6, 3, 7, 5, 7, 5, 7, 4, 5, 7, 5, 9, 7, 3, 0, 3, 8, 6, 2,
+      5, 4, 3, 9, 3, 4, 6, 3, 6, 1, 3, 2, 2, 6, 3, 8, 6, 4, 0, 9, 0, 7, 7, 5, 9,
+      8, 1, 4, 8, 7, 7, 1, 2, 1, 1, 2, 1, 8, 1, 1, 6, 1, 8, 1, 1, 1, 0, 6, 3, 1,
+      
+      9, 6, 7, 6, 2, 6, 2, 0, 0, 7, 1, 6, 5, 3, 3, 0, 6, 0, 3, 9, 6, 6, 3, 8, 0,
+      5, 3, 2, 6, 1, 1, 4, 6, 9, 2, 0, 1, 0, 2, 3, 0, 4, 2, 6, 0, 7, 6, 7, 7, 3,
+      3, 1, 7, 9, 8, 3, 1, 8, 9, 8, 4, 1, 5, 2, 2, 0, 9, 1, 0, 7, 2, 7, 9, 1, 4,
+      0, 2, 1, 7, 8
+    )
+  ) %>% 
+  mutate(result = result * 10,
+         obs = 1:nrow(.))
+
+plot_result(`green_d%_df`, set_fill_map["green"])
+```
+
+
+```{r green-d12}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[4] & dice_setup$die == dice[6], "sample_size"] / 19
+
+green_d12_df <- # want: 908 rolls
+  data.frame(
+    set = sets[4],
+    die = dice[6],
+    result = c( # 19 per full row
+      3, 11,  5, 10, 12,  4, 11,  1,  3,  6,  6,  7,  7, 11,  7,  1,  3,  7,  6,
+      7,  4, 10,  5,  1,  6,  5,  6,  7,  7,  9,  8, 12, 10,  6, 12, 11,  9,  3,
+      3,  9,  8,  7, 12,  6,  9,  3,  2, 12, 11, 11,  7,  4, 10,  1,  1,  2,  8,
+      1,  9,  1,  5,  5, 11,  1,  3,  4,  8, 12, 10,  4,  2,  3,  5, 10,  9, 11,
+     12, 11, 10,  4,  7,  9, 10,  2, 10,  9,  9,  7,  9,  3,  3,  9,  8,  5,  3,
+      4, 10,  2,  9,  5,  7,  2,  1,  9, 11, 12,  7,  8,  5,  5,  9,  5, 10,  8,
+     
+      3,  4, 10,  9,  2,  4,  6,  6, 10,  4,  8,  4,  8,  9,  5,  7,  1,  1,  1,
+      9,  3,  4,  9,  4,  8,  7,  4,  6,  8,  3,  5,  5,  5,  9, 11, 10, 12,  8,
+      1,  1,  4,  5,  1,  7,  7,  9,  4,  7,  1,  7,  3,  5, 12,  5, 10,  6,  3,
+     12,  4,  2,  5,  6,  5, 12,  8,  6,  3,  3,  4,  7, 11,  4,  6,  5,  1,  5,
+      8,  8, 12, 12,  9,  8,  2,  1,  2,  3, 11,  7, 12,  5,  4,  2,  3,  9,  9,
+     
+      4,  6, 11,  2, 12,  9,  9, 12,  4,  2,  3,  8,  6,  3,  6, 11,  6,  9, 10,
+     10,  7,  3,  8, 12,  1,  1,  3, 11,  1,  6,  3, 12, 12, 11,  5, 12,  8,  9,
+      7,  6,  9, 11,  2,  2, 11,  8,  6,  3, 10, 12,  7, 10,  8,  9,  7, 10,  1,
+     10,  2,  7,  7,  7, 11,  6, 10,  4,  3,  7,  4,  1,  3,  6,  7,  9,  3,  9,
+      1,  5,  1,  2,  3,  1,  6,  4,  5,  4,  7, 12,  2,  9,  1, 10,  1, 10,  3,
+     
+      5,  7,  3,  3,  6, 10,  5,  3, 11,  2, 10,  8,  4,  8, 10,  6,  4, 11,  9,
+     12,  9, 10,  9,  4,  5, 11,  1,  2,  9,  7,  2,  1,  8,  3,  5,  2,  6,  9,
+     11,  4, 11,  8, 10, 11, 11, 11, 11,  8,  3,  9,  3,  9,  5,  8,  9,  8,  2,
+      5,  6,  4,  5, 11,  9,  8,  4,  4,  6,  2,  9,  7,  9,  9,  3,  2,  4,  9,
+     10,  2,  4,  6,  9,  3, 11,  9,  3,  6,  5,  8,  7,  6,  5,  4,  5,  9,  4, 
+     
+      3,  9,  6, 10, 12,  7, 12,  2,  5, 12, 12,  4,  7,  2, 11,  7, 10, 10,  3,
+      4, 11,  9, 11,  6,  5,  8,  9, 10, 10, 12, 11, 12,  5,  7,  4,  4,  5,  1,
+     11,  4,  5,  5,  6,  3,  9, 11,  5,  5,  4,  7,  1,  2,  2, 12, 12,  2,  8,
+     12, 10,  9, 11,  9,  6,  6,  4,  2,  5,  2,  6, 12,  7,  7, 11,  1,  8, 10,
+      7,  3,  9,  2,  9,  7,  4,  3,  6, 11,  1,  5, 12, 10,  3,  2, 11,  4, 10,
+     
+      8, 11, 11,  7,  7,  3,  7,  6,  5,  1,  4, 11,  5,  6,  3,  8,  1, 12,  6,
+      2, 12,  4,  1,  7,  3, 12,  5,  7,  5,  3,  8,  6,  9,  8, 12,  5, 11,  5,
+     11,  4,  8,  9, 11,  5,  3,  2,  7,  7, 11, 12, 10,  4,  4, 11,  4, 11,  2,
+      8,  3,  2,  3,  5,  2, 12,  8, 11,  5, 11, 12,  9,  8,  5,  2,  2,  3, 10,
+      3,  7,  1,  3,  7,  9,  7, 12, 10,  7,  9,  1,  5,  9, 11, 12,  9,  5,  7,
+     
+      1, 12,  6,  3, 12,  4, 12,  2,  2,  6,  2,  7,  7,  3, 12,  6, 11,  2,  3,
+      6, 11,  6,  1,  1,  4,  7,  6,  5, 11,  4,  3,  6,  9,  4,  3, 10, 12, 10,
+      6,  8, 12,  3,  7,  7,  9, 12, 11,  5,  8,  3, 11,  5, 10,  1, 11, 10,  7,
+      7,  7,  8,  6,  8,  8,  2,  8,  5,  9,  6,  7, 11,  4,  8, 10,  2,  3,  1,
+      5, 12,  5,  5,  2, 12,  6, 12,  7,  4,  9,  4,  2,  1, 10,  6,  8,  1,  2,
+     
+     12, 11,  9, 11,  2,  5,  2, 12,  1,  7,  4,  2,  1, 11,  2,  5,  3,  9,  2,
+      5,  7, 11,  2,  8,  4,  1,  5,  5,  4, 11,  4,  4,  4, 11,  9,  3,  3,  7,
+      5,  7,  3,  2,  7,  5, 10,  7, 10,  9, 10,  2,  9,  6,  7, 11,  8,  2,  9,
+      9,  9,  6, 12, 10,  9, 10,  5, 11,  3,  5,  2,  4,  7,  2,  4, 12,  2,  7,
+      8, 10,  3,  7,  6,  8,  9,  1,  8, 11,  3,  2,  6, 10,  4,  8,  1,  8,  6,
+     
+      6,  8,  9,  8, 11, 10,  4, 10,  5,  5,  1,  7,  3,  8,  1,  1, 10, 11,  8,
+      2,  3, 11, 10, 12,  3,  1, 10,  9, 10,  8,  1,  8,  6,  7,  6,  5,  7,  9,
+     10,  4,  8, 10,  8,  4,  6,  9,  9,  1,  7,  9,  2,  4,  2,  5,  1, 12,  8,
+      9,  4,  5,  3,  1, 10,  7, 10,  3, 11,  4,  7,  3,  8,  5, 11,  2,  2, 11,
+      6,  2,  5,  8,  2,  7,  9, 11, 12, 12,  1,  7, 10,  9,  6,  7,  6,  3, 10,
+     
+     11,  2,  9,  2,  5,  6,  8,  9,  8,  9,  9,  6,  6,  4, 10, 12,  9,  6,  7,
+      3,  2,  8,  8,  1,  3,  8,  4,  4,  2,  4,  9,  1,  4,  6
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(green_d12_df, set_fill_map["green"])
+```
+
+
+```{r green-d20}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[4] & dice_setup$die == dice[7], "sample_size"] / 19
+
+green_d20_df <- # want: 1851 rolls
+  data.frame(
+    set = sets[4],
+    die = dice[7],
+    result = c( # 19 per full row
+      2, 11,  1,  1, 10,  1,  6, 10, 10, 15, 13, 13,  5, 17,  3, 12, 20,  8, 18,
+     16,  8, 18, 15,  7, 12, 10, 19, 19, 10,  7, 10,  5, 14, 10, 10,  8, 16,  2,
+     10,  5,  1,  6, 15,  5, 10, 17,  7, 13, 10,  4, 14, 12,  7,  1, 16, 10,  6,
+     20, 14, 10, 16,  5,  1, 14, 20,  2, 16, 14, 11,  6, 12,  2,  8,  5, 18,  7,
+     14,  5,  4,  4,  5, 18, 14, 16, 14, 15, 18,  8,  3, 19, 10, 18,  4,  8,  2,
+     
+      8,  2,  5, 10, 13, 13, 16,  5, 10,  8, 13, 16, 16,  8,  5, 14, 20,  7,  1, 
+     13, 13,  4, 12, 13, 13, 11, 14,  6, 17,  1, 11, 12,  2, 19,  3, 13,  3,  4,
+     16, 16,  2, 10, 18, 14,  3, 10, 12,  2,  6, 13,  1, 10,  5, 10,  4,  5, 15,
+      8, 13, 13,  8, 11,  6, 10, 10, 10, 18,  2, 12, 10, 12, 16, 12,  1, 19, 20,
+     10,  6,  7,  8, 13,  1, 13, 11,  5,  1, 18,  1, 12,  7, 12,  5,  2, 18,  3,
+     
+     10,  1,  5, 14,  7,  1,  7, 13, 18, 17, 13,  5, 10, 13, 14, 19, 14, 14, 19,
+     14, 19, 15,  5, 12,  8,  1, 15,  5, 15, 10,  5,  4,  4, 15,  6,  5,  7,  8,
+      9, 18,  2, 17, 13,  2, 11, 13,  2, 14, 18, 12,  4, 10,  5,  7, 16, 19,  4,
+      1,  7, 16, 15, 13, 10, 11, 15, 10, 17, 12, 13, 12,  8,  7, 16, 13,  4, 17,
+     16, 19, 10, 11,  5, 16, 10,  9, 10,  3, 12, 16, 16, 10, 18, 18, 14, 16, 18,
+     
+      1,  5, 18, 18,  4,  8,  9, 11,  9,  1, 16, 13, 16,  4,  7,  6, 10,  2, 11,
+     10, 11,  8, 12,  4,  7, 11, 19, 14, 20,  4, 13, 13,  6, 19, 12, 13, 15,  6,
+     10, 11, 14,  1,  9,  6,  1, 12,  1, 14,  2,  2, 12, 14,  5,  7, 10,  5, 16,
+      4, 19, 12, 16, 13,  8,  2, 16,  8,  3,  1, 16, 10,  7, 16, 14,  1,  16, 4,
+      2,  4, 18, 12,  8, 18, 17,  3, 14, 13,  2,  7,  6, 16,  1,  1, 14, 10,  6,
+     
+     13, 18,  6, 10, 11,  1, 16, 14, 10,  5,  1, 15,  4,  8, 16, 10, 20, 14, 18,
+      1, 10,  8,  4,  2, 17,  8,  8, 17,  8,  1,  8, 12, 11, 13, 16,  1,  3, 19,
+      2,  2, 19,  1,  9,  7,  1,  4, 14, 18, 10, 15,  6,  5,  5, 15,  7,  5,  7,
+     12, 10, 18,  8, 12, 11, 14, 13, 19, 11,  4, 12, 18, 15,  6, 18,  5,  2, 10,
+     18,  8, 20,  2, 14, 19,  7,  3, 14,  8,  2,  5,  8,  4,  2, 17, 13,  7,  5,
+     
+     14, 11,  9, 16,  1, 13, 14, 15,  2,  7,  8, 12, 15, 16, 18, 19,  8,  8, 10,
+     13, 14, 10,  3, 10,  8, 16,  4,  2,  2,  5,  7, 11, 18,  9,  1,  6,  4, 14,
+     14, 14,  1, 17,  7, 13, 15, 18, 11,  5, 14, 14,  8,  8,  2, 11,  6,  3, 10,
+     19, 12,  7, 12,  2, 19, 12,  1,  7, 19, 16, 13,  1,  6, 11, 16,  9,  5,  8,
+      8, 15, 15,  8, 16,  9, 10, 20, 14, 16,  6, 10,  5, 10, 14, 13, 15,  2,  5,
+     
+     11,  9, 11, 13,  2,  6, 18,  6, 13, 10,  8,  8, 19,  5,  1,  2, 16, 17, 13,
+     12, 12, 12, 17,  2, 16, 16,  6, 16,  9,  8, 20,  5,  5,  5, 16,  1, 14, 19,
+     16,  1, 13,  1, 10,  5, 10,  5, 19,  7, 11, 10, 15, 18, 13, 12, 13,  4,  6,
+     18, 15, 13, 16, 18, 15,  3,  5, 10,  8,  8, 16, 17,  3, 14, 16, 19,  4, 10,
+      2,  3,  1, 10,  2, 16, 20, 15, 16, 20,  1, 19, 18, 13, 18, 18,  8, 12, 17,
+     
+      6,  3, 10, 12,  4,  5, 12,  4,  2, 19, 16,  4, 10,  2,  5,  2,  2, 13, 17,
+     15,  6,  2, 15, 19, 17,  2, 10, 12, 18,  6,  4,  6, 17, 14, 16,  8,  3,  5,
+     20, 16, 20,  2,  7,  9,  6,  8, 16, 17,  2, 19, 10,  4, 18, 19, 13,  5,  4,
+      8,  1,  1,  4, 15,  6, 17, 10, 18,  5, 16, 20, 16, 17,  2, 11,  7, 16, 11,
+      4,  8, 14,  8,  2, 14, 16,  9, 12, 10,  9,  3, 10,  5, 11,  6, 18,  2,  8,
+     
+     14,  7,  8,  9, 12, 10, 19,  7, 16, 10, 16,  9,  5,  5, 13, 19, 12, 14, 17,
+      1,  2,  2, 16, 14,  8, 15, 12, 18,  4, 13, 12, 15, 10,  7,  5,  8, 16,  9,
+     11, 11, 10, 10,  9, 20, 14, 12, 15, 14, 18, 18, 20, 10, 16, 14, 16,  5, 16,
+      6, 14,  5,  1,  6, 20, 17,  8, 16, 13,  4, 20, 13,  2,  4,  4,  2,  6,  7,
+     19,  8, 16, 20,  9,  1, 12, 16, 16, 13,  2, 15, 18, 16,  6,  2, 20, 19, 16,
+     
+     14,  4, 12, 20, 14,  7,  8,  9, 15, 15,  3,  4,  8, 19, 20,  2,  2,  4, 16,
+      5,  6,  4,  3, 17, 10,  7, 16, 11, 11, 12, 12,  5, 13, 12, 13, 12, 12, 10,
+      2, 20, 15, 16, 19,  9, 10,  6, 15,  6,  1,  1,  5, 19, 20, 13, 20, 10,  4,
+      8, 18,  7, 20, 14,  8, 16, 14, 10, 17,  9, 18, 19,  9, 13, 16, 13,  1,  2,
+      7, 10, 12, 11, 10,  2,  4, 16,  8,  5,  1, 20,  5,  1, 11,  7, 18, 15, 11,
+     
+     10, 14, 12, 10,  5, 19, 18,  8, 11,  3,  2, 10,  5, 16, 17, 13,  6, 16, 16,
+     16, 16, 15, 11,  7, 10, 12, 16, 13,  5, 16, 11, 12,  5, 19, 15,  2,  5,  7,
+     16,  4,  4, 15,  3, 10, 11, 14,  8, 18, 13,  4, 13,  9,  4, 16, 13, 20,  2,
+     13, 16,  8, 13,  6, 15,  9, 11,  1,  5, 12, 14,  1,  1,  1,  2,  3,  2, 16,
+     16, 18, 13,  7,  4, 11,  8,  5, 10, 12,  8, 13, 16, 19, 13,  4, 12, 17,  4,
+     
+      8,  2, 14, 17, 13, 10,  9, 19,  3,  2,  1,  4,  8, 16, 16, 15,  9, 10,  6,
+      4,  4, 10, 17,  2, 13, 16,  5, 17, 16, 19, 18, 10,  1, 14,  6, 10,  7, 10,
+     20, 18,  2, 10,  8,  4,  6,  5,  8, 12, 19,  1, 17, 20, 13, 13,  1,  6, 14,
+     10, 20,  2,  6,  2,  1, 10, 14, 20,  9, 14, 12, 13, 19,  1,  8, 15,  5, 16,
+     19, 10, 20,  6,  1, 13,  8, 16,  4, 16,  5,  8, 13, 17, 17, 20, 10,  7, 11,
+     
+     14,  5,  8,  2,  8, 12,  3, 16, 16, 10,  5,  1, 19, 10, 19,  7, 11, 12, 10,
+      3,  2,  2,  8,  8,  6, 11, 12,  1,  1,  5, 14, 16, 16, 15,  8,  2, 20, 15,
+      8,  2, 15, 14, 16, 14, 10, 16,  6, 10, 18, 13, 10,  8, 12, 16, 10, 10,  1,
+     10, 17, 14,  1,  2, 11, 12,  2,  1,  8, 10, 10,  5,  8,  3,  3,  9,  4, 18,
+     14,  2,  8,  5, 18, 12, 18, 14, 13, 19, 13, 12, 15, 14,  2, 12,  4, 16, 11,
+     
+      1, 10, 12, 16, 20, 18, 12, 18,  6,  1,  8, 14,  4, 10, 18,  6, 12,  1, 14,
+     18, 20, 12,  1,  2,  7, 15, 16, 20,  4, 20, 20, 15,  7, 14,  4,  5, 13,  2,
+      5,  5, 13,  1, 19, 10,  4, 13,  8, 19, 16, 20, 14, 11, 17,  9,  3, 14, 15,
+      3, 12,  1, 16, 12, 10, 16,  6, 17,  7,  4,  2, 11, 20,  4, 12, 18,  9,  3,
+     10,  1,  7, 15, 15, 12,  8, 16, 14,  4, 12, 16,  1,  2, 14, 17, 16, 18,  8,
+      
+      3,  8, 10, 13,  8,  6,  9,  8, 14, 19,  1, 14,  3, 10, 10,  1,  2, 11, 11,
+      2, 18, 11, 16, 15,  3,  6, 16, 14,  3,  6, 17, 18,  4,  4,  7,  6, 10, 13,
+     16, 11, 20, 18, 19, 11,  8, 14, 13, 13,  1, 13, 18, 12, 15, 18,  8, 19, 20,
+      2, 10, 17, 14, 18,  8, 19, 10,  1,  8, 13,  8,  6, 18, 13, 16,  4,  4,  7,
+     17, 13,  9, 16,  9, 12,  6, 12, 11,  1,  4,  1,  9, 19, 20, 19, 14,  9,  4,
+     
+     18, 12,  9, 13,  9,  6, 13, 15, 12,  1,  7, 16, 10, 11,  3, 10, 19, 18, 18,
+     10,  2, 11,  9,  8,  4, 18,  2, 18,  6, 16, 19, 10,  9, 17, 20, 16,  9, 13,
+      4,  7,  8,  4,  2,  8,  7,  6, 13, 10,  8,  1, 15, 12,  5, 13, 10,  7, 15,
+      5,  7, 13, 20, 10, 13,  6,  3,  3, 20, 12, 11, 10, 14,  4, 16,  1, 17,  2,
+     18,  5,  8,  5,  1, 11,  1, 20,  9, 19,  1, 13, 20, 13, 13,  8,  6, 19, 12,
+     
+     15, 16, 16,  3,  4, 14,  8,  1, 14, 12, 14,  8,  9, 16,  8, 16, 12,  4,  6,
+      4,  7, 10, 13, 12, 13, 15, 18,  8,  3,  9,  1,  4, 16,  7,  4,  1,  5, 12,
+     19,  9, 17, 16, 11,  7, 13,  5,  4, 17,  8,  6,  8,  8, 13,  2, 15,  1,  4,
+     17, 10,  5,  1,  8, 20,  4, 16, 12, 16, 13,  9, 12, 19,  1, 17,  8,  3, 10,
+     18,  4,  9, 13, 11, 19, 10,  6, 14, 13, 16,  3, 16, 16, 11,  1, 16,  5,  8,
+     
+     15, 11, 11,  2,  6, 12,  4, 12, 12, 11,  2, 19, 14, 16, 20, 14, 16,  4, 17,
+     12,  1,  7,  3,  2, 12,  6, 10, 19, 17, 13, 18,  1, 17,  2, 12,  5, 19, 15,
+      5, 14, 10,  5,  8, 16,  2,  1,  8, 17,  7, 12,  6, 10, 14,  8,  2, 10,  6,
+     10,  9, 10, 20,  2,  7,  7,  1, 16, 13, 14, 20, 17, 13,  5, 15, 16, 17,  8,
+      7, 20, 11,  8, 10, 14, 16, 20,  8,  6, 12, 13,  6, 12,  2,  8, 16, 19,  6,
+     
+     13,  6, 17,  5,  1, 15, 14, 10,  5, 16,  6, 17, 11, 19, 15, 10, 12, 10,  7,
+     10, 19,  1, 10, 13, 11,  3, 19,  5,  6, 12,  2,  2, 14,  5, 11,  3,  4,  2,
+      2, 10, 10, 12, 15, 13,  5,  4,  1, 13, 10, 11,  7, 10,  1, 14,  6,  9, 19,
+      8,  5,  9,  7, 18, 16,  8,  2, 16, 18,  8, 10, 16,  3, 16, 17, 10,  6, 18,
+      7, 12, 19, 12,  5,  5,  7, 10, 17,  8,  5, 19,  8,  4, 12,  2, 14,  9, 14,
+     
+      1, 13, 10, 11, 11,  2, 10, 10, 10, 10, 10,  7, 17, 20, 14,  5, 11, 10, 10,
+     12, 18,  4,  2, 16, 19,  3, 11,  2, 17,  9,  8,  6, 14,  2,  6, 16,  5,  3,
+     18,  9, 16, 18,  1, 20,  2, 18
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(green_d20_df, set_fill_map["green"])
+```
+
+
+### Individual d20s
+
+```{r teal1-d20}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[5] & dice_setup$die == dice[7], "sample_size"] / 19
+
+teal1_d20_df <- # want: 1851 rolls
+  data.frame(
+    set = sets[5],
+    die = dice[7],
+    result = c( # 19 per full row
+     17,  4, 19, 13, 12, 10,  5,  5, 14, 14,  5, 15, 19, 10, 11, 10, 13, 12, 13,
+     20,  8,  2, 11,  6, 11,  8,  3,  1,  4, 10,  1, 12,  1, 10, 14, 10, 15, 16,
+     10,  5, 16,  3, 15, 10, 14, 16,  8, 16, 11, 17, 15, 17, 11,  7,  4, 17, 16,
+      5,  9, 18, 18,  5, 12, 18, 19,  4, 10,  9, 17, 15, 19, 12, 17,  7, 10, 17,
+     12,  5, 15, 16, 14, 17,  3,  4,  5, 14, 20, 13, 17,  9, 13,  7,  9, 14, 13,
+     
+     17, 20,  9,  6,  9, 13, 11, 19, 18, 20,  6, 12, 19,  3,  5,  1, 16, 18, 12,
+     19, 10, 20, 18,  9, 14, 10,  6, 14,  8,  9, 17, 11, 17,  9, 16,  8, 18,  8,
+      4,  9,  2, 17,  3,  8, 13,  1,  9,  1,  9, 17,  4,  1, 10, 14, 20, 13, 16,
+      1,  4, 17, 14,  8,  7, 19,  7, 19, 12, 14,  3,  8,  3,  8,  5, 13, 14, 16,
+     15,  6,  2,  3,  2, 12,  5,  4,  2, 20,  8, 16, 20, 19, 10, 12, 18,  3,  3,
+     
+      2,  5,  6, 14, 12, 15, 16, 12, 15, 18,  9, 19,  9,  9, 15,  8,  5,  6, 18,
+      9, 14,  8, 17, 11,  5,  7, 19, 18, 14, 11, 14,  6,  5, 15,  5, 14, 19, 19,
+     11, 14, 10, 20, 11,  4,  8, 15, 18, 15, 20, 14, 19,  9, 19,  3,  1,  2, 20,
+     18,  9,  6, 19, 13,  3, 11, 10, 16, 17, 12, 14, 11, 12, 10, 10, 20, 12, 18,
+     20,  6, 14, 17, 17,  4,  9, 19,  3,  5,  8,  9,  5, 11,  3, 11,  1, 12, 17,
+     
+     18, 11,  6,  5, 15, 15,  7, 20,  9, 10, 16,  4, 12,  2, 10,  9, 19, 12, 10,
+      5, 19, 16,  4, 19, 13,  3, 16, 19, 10, 10, 15,  5, 18, 17,  4, 19,  9,  6,
+     14, 18, 16,  9, 20,  4,  2, 17,  9, 17, 12,  5, 19, 13,  7, 20, 10, 19, 12,
+     19, 17, 11, 14,  4, 11,  6, 16,  8,  1, 16,  8, 12,  5,  6,  7, 13,  4,  6,
+      2,  8, 16,  9, 16, 15, 16, 20,  6,  9, 17,  6,  9,  4,  3, 11, 10, 16, 12,
+     
+     15,  9,  3, 17,  5, 14, 12, 13, 14, 17,  7,  5, 15, 17,  7, 14, 16, 11, 10,
+     12, 18,  5, 19, 19, 13,  5,  3, 11, 10, 16,  6, 20,  3, 11, 19, 19,  2, 17,
+      6,  1, 18,  3, 17, 18,  4, 12,  7, 15,  4, 14, 17, 18, 12,  1,  4, 19, 16,
+      9, 17, 13, 14, 17,  6, 11,  4,  5, 20,  3, 10, 14, 17, 15, 12, 12, 19, 16,
+     10, 19, 11, 16, 12,  1,  7, 19,  1, 14, 12,  6, 11,  1, 11,  3,  4, 15, 16,
+     
+      5,  1, 19,  3, 17,  4,  6, 18, 18, 15, 12,  3,  7,  5, 17,  7,  8,  9,  4,
+      9, 16,  3,  4,  9, 20,  7,  4,  4, 13,  9,  3, 15, 18, 18, 10, 10, 16,  9,
+      2, 17, 17, 17, 15, 20, 11, 18, 13,  9,  6, 10, 19, 12, 11,  1,  4, 10,  5,
+      5,  4,  8, 19,  4, 17, 17, 10, 14, 10, 16,  7, 13, 19, 13, 18, 17, 14,  1,
+     15,  7, 11, 16,  6, 15, 20,  2, 10,  9, 12,  8,  7, 10, 15, 16,  9,  4,  1,
+     
+     20,  8, 18,  6,  8,  6, 10,  7, 13, 18, 12,  9, 12,  9, 12, 20, 14, 16,  6,
+     19, 10, 20, 10, 19, 16,  2,  4, 17, 18, 10, 18, 11,  1,  4, 16, 16, 11,  5,
+      2,  5, 17, 13, 10,  8,  4, 14,  7, 13, 19, 12, 11,  9,  4, 14,  5, 11,  9,
+     18,  5, 10, 19, 13, 16, 11, 13, 13,  7, 12, 19, 15,  4, 16, 18,  6,  9, 15,
+      6, 13,  8, 17,  8, 20, 12,  3, 14,  6, 20,  4, 11,  2, 17, 19, 18, 18,  9,
+     
+     19, 12, 18, 12, 13, 14,  8,  1, 12,  6,  3,  3,  9, 12, 18,  9,  7, 15, 17,
+      7, 19,  8,  7, 13,  9,  5,  5,  5, 17, 15,  7,  7,  3, 12,  1,  1, 16, 12,
+      4, 10,  4, 12, 12, 19,  4,  1, 12,  5, 19, 16, 18, 18, 11, 17, 17,  5,  7,
+      5, 14,  9, 10, 19,  1,  9,  8,  7, 16,  5,  2,  8, 16,  4, 20,  3, 15, 20,
+     15,  9,  6,  5, 17, 13,  4, 12,  2, 18, 12, 17, 18,  6,  3, 13,  9,  7, 12,
+     
+      4,  7, 14, 16, 12, 15,  2, 16, 12,  8, 20, 18, 13, 17,  7, 10, 19, 18, 20,
+      9, 19,  7, 17, 16, 13, 19, 14,  7,  6, 20, 11,  2,  5, 12,  4, 20,  8, 15,
+     12,  2,  3,  6,  9, 13, 19,  3, 20,  5,  3, 19,  4,  4, 20, 11,  6, 13, 20,
+      1,  9, 12, 11, 18,  7, 13, 15,  9,  7, 11, 10, 19,  7, 10, 18,  6,  6, 14,
+     14, 10,  5, 13, 11,  7, 12,  6, 13,  9,  7,  8, 14,  2,  4,  8, 15, 16,  5,
+     
+     14, 16,  6, 20,  7, 11, 19, 19, 14, 10, 10,  4, 14, 13,  5, 10, 11,  8,  6,
+     12, 15, 11, 11, 14,  4, 12, 14,  7, 13,  6,  7,  3, 14, 16, 10,  7, 15, 14,
+     15,  9,  6,  1,  3,  8, 12,  8,  4, 10,  7,  7,  2,  8, 15,  6,  5, 19, 13,
+     17,  6,  6, 12,  9, 16,  4, 17,  5, 18, 20, 13, 16, 13,  4,  8,  8, 13, 19,
+      6,  5, 12,  5, 17,  8,  8, 18, 14,  1, 11, 12,  9, 11,  6, 17, 10, 17, 10,
+     
+     12, 12,  3, 14,  4, 14,  8,  5,  1,  4, 13,  5, 20, 18, 14,  9, 18,  1, 11,
+     17, 11, 13,  1, 19,  3,  5, 13,  7,  6, 19, 16,  1, 16, 15, 16, 17,  8,  7,
+     15,  6,  6, 11,  6,  3, 13, 10, 19, 12, 13,  8, 20, 11,  4, 12, 14, 14,  7,
+      7, 15,  6, 16, 19, 12,  3,  9, 15, 14,  9,  3,  2, 16, 12,  4,  9, 17, 15,
+     12, 19,  9, 18, 10, 20,  7, 14, 19, 12, 14,  7,  1,  8, 14, 19, 12,  5,  7,
+     
+     11,  3, 10, 17,  8, 13,  6,  1, 20,  8, 16, 13, 17,  8, 10, 11, 10,  3, 12,
+     11,  5, 19,  5,  2, 19, 12, 18, 20, 19, 16, 12, 14,  5,  2,  5, 14,  9, 14,
+     17, 12, 20, 12, 20,  4, 14,  6,  4,  5, 10, 12, 10,  9, 13, 17, 17, 15,  9,
+      1,  5, 20,  7, 13, 16, 13,  5,  6, 19, 16, 14,  8, 20,  8,  7,  5, 19, 17,
+     14,  7,  7, 11,  9,  4,  1,  4,  9, 16, 14,  9,  5,  8,  4,  6, 19,  3, 20,
+     
+     18,  5, 15,  5, 17, 13,  7,  8,  3, 12, 16, 11, 20, 19,  4, 12,  8,  9, 18,
+      5, 16,  4,  1, 19, 20, 13, 14, 15,  7, 17,  7,  7, 14, 15, 14, 19,  8,  7,
+     14, 17, 14, 10, 13,  8, 11,  5, 13,  2, 16,  8,  2, 20, 14, 20,  9, 19,  5,
+      9, 12, 12,  7,  3, 10, 20, 15,  6,  8,  3, 19,  1,  2, 19, 20,  7, 13,  4,
+     14, 20, 11, 16, 19,  8,  3,  3,  7, 11,  4,  3,  9, 18, 10,  3,  9,  2,  4,
+     
+      4,  8,  9, 14, 12,  2, 11,  8,  9,  9,  3,  9,  2,  3, 16,  6, 13,  5,  6,
+     14,  5, 12, 14, 16,  6, 14, 15, 13,  8, 14,  9, 19,  7, 13,  1, 12, 12,  5,
+     20,  3, 10,  7, 14, 19, 13, 12,  6, 11,  7,  7,  5,  9, 17, 19,  4, 12, 18,
+     17,  5,  2, 10, 10,  4, 11,  2, 19,  9,  7, 19, 17, 12,  5, 10,  5,  3,  8,
+     16, 17, 17, 14, 19, 14,  6,  6, 17, 10,  1, 18,  1, 18,  4,  1, 18, 12, 14,
+     
+      7,  5,  6, 12, 11,  7,  7,  9, 18, 17, 11, 17,  4, 10, 16,  5,  4,  9,  4,
+      8, 14, 10,  5,  3, 20, 18,  8, 19, 15, 17,  5,  8, 11, 13, 12, 11,  9, 18,
+      2, 19, 17, 17,  6, 14,  6,  1, 11,  6, 12, 19,  8, 14, 17,  6, 16, 10,  6,
+     17,  3, 19,  9,  8,  2, 20,  6, 13, 10,  4,  8, 16,  5, 15, 14, 19,  3, 20,
+      3, 15, 15,  8, 16, 17, 19, 11, 15, 14, 11,  6,  7,  3, 19, 14, 15, 14, 15,
+     
+      3, 12, 11, 17,  8,  6,  9, 15,  3, 11,  6, 18,  5,  6, 19,  4,  8,  1,  8,
+     19, 16,  7,  5,  6, 14,  7,  6,  8, 16,  6, 19, 20,  3, 11, 19, 19, 18, 20,
+     12, 20, 17, 16, 14, 17, 12, 17,  1, 16, 15,  3,  1,  1,  6, 20,  9, 14, 20,
+     10,  9, 17, 19, 15, 12, 18, 12, 13, 20, 15, 13, 18,  5, 15,  1, 12, 10,  8,
+     15,  9, 18,  4, 20,  4,  4, 19,  7,  3,  6,  4,  5,  3,  4, 12, 20,  1,  4,
+     
+     20,  8,  4, 15,  6,  3,  4, 19,  2, 11,  9, 20,  7,  9,  1, 20, 17, 12, 11,
+      3,  7,  3, 17,  8, 19, 10,  7,  9,  2, 10, 13,  7,  7, 16, 15, 13, 17,  3,
+     15, 15, 15, 19,  7,  6, 12, 18, 13,  4,  7, 15,  1, 14, 17, 13, 14,  4,  5,
+     16, 18, 16,  2,  1,  8, 10,  1,  1,  4, 14,  2,  8, 17,  2, 12,  8, 10,  4,
+     12,  1, 16,  1, 17, 15, 14, 14, 18,  8, 14,  5, 18, 16,  8,  8, 18,  4, 18,
+     
+      9, 18, 17,  1,  2,  7, 18,  8,  3,  3, 15,  6, 10,  9, 13, 14, 19,  2, 14,
+      9, 19,  3,  9, 19, 17, 10, 13, 20, 12, 15, 18, 10, 13, 19,  5, 13, 19,  2,
+      3,  3,  7, 10, 16, 12, 18, 19, 19,  2,  1,  4,  4, 14,  4,  4, 19, 11,  3,
+      8,  8,  5,  8, 10,  1, 20, 17,  4, 10, 14, 20, 18, 15, 12,  4, 10,  8, 12,
+      1, 10, 12,  5, 15,  5,  6,  9, 18,  7,  8, 10,  8, 12,  2, 11, 13,  4, 12,
+     
+     12, 14,  4, 17,  2,  4,  5, 20, 18, 14, 11, 20, 17, 11, 12, 14, 13, 16,  6,
+      8,  2, 20,  9,  4, 15,  6, 14, 13,  6,  3,  1, 13,  9, 14, 20,  3,  6,  4,
+     13, 19,  4, 17,  1, 12,  8,  4,  8,  1, 18,  4, 20,  5, 12, 20, 14, 12, 10,
+     17,  7, 16, 19, 19, 16, 14,  2, 19, 13,  2, 13,  3,  3, 13, 10,  7, 11,  4,
+      8, 14, 11,  8, 15,  1, 16,  7, 13, 10, 17,  5,  5, 20, 11,  1, 10, 13,  3,
+     
+     12,  1,  6, 16,  7,  5,  5, 10, 18,  7, 15, 20, 11,  5, 13,  6, 13,  8,  1,
+     12, 16, 11,  7, 18, 14,  6, 15, 13, 15,  8, 16,  1,  6, 18,  8,  3, 17, 17,
+     20,  3, 10, 15, 15,  6, 19,  1
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(teal1_d20_df, set_fill_map["teal1"])
+```
+
+
+```{r teal2-d20}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[6] & dice_setup$die == dice[7], "sample_size"] / 19
+
+teal2_d20_df <- # want: 1851 rolls
+  data.frame(
+    set = sets[6],
+    die = dice[7],
+    result = c( # 19 per full row
+      4,  2, 18, 16, 20, 10,  5, 19,  5, 16,  3,  3,  1, 19,  8,  6,  6,  3,  4,
+      2,  4, 19,  6,  2, 17,  8, 20,  7, 13, 12,  4, 12, 18,  9,  1, 18,  2,  7,
+     18,  2, 17,  7,  8,  3, 16, 19, 16,  1, 11,  6, 14,  7,  8,  5, 11, 12, 12,
+      6, 17, 15,  1,  1,  2, 19, 10, 16, 10, 19, 18, 14, 12,  6,  4, 11, 18,  6,
+      1, 13,  3, 12,  1,  9,  4, 17, 13, 10, 14, 10, 19,  1,  5,  6,  8,  5, 10,
+     
+      8,  7,  3, 14, 19, 14,  5, 17,  8,  7,  3, 16, 11, 16, 10,  7,  6, 16, 17,
+      7, 11, 15,  2,  8, 15,  4, 10, 17,  4, 14, 14,  8,  8,  7,  9,  8,  7, 17,
+     19,  4, 16,  9,  1,  2,  7,  4,  7, 17,  2,  3, 14, 17,  6,  4, 16, 17,  4,
+      6,  5, 13, 17,  9,  4, 14, 18, 13,  3, 13, 17,  6,  8, 18,  3,  7, 19,  5,
+      6, 14,  4,  8, 18,  2, 15,  8, 14, 16,  2,  9,  5,  2, 12, 19, 18, 17,  5,
+     
+     14,  4, 19,  1, 20,  5, 15,  7,  1, 10,  6, 16,  1, 14, 19,  3,  4,  3,  6,
+     18,  2, 17, 18,  5, 19,  6, 17, 13,  1, 13,  5, 16,  4,  5, 20, 13, 17, 18,
+      5,  8,  7, 14, 15,  2, 15, 17, 11,  5,  1, 20,  9, 19,  7, 17, 17,  4, 13,
+      6, 16, 17,  7, 17, 10, 20, 11,  8,  7, 17,  6, 12, 19, 11,  4,  2,  2, 12,
+      2,  9, 19,  5, 14, 14,  4,  6,  3, 19,  8,  8, 14, 16, 12,  7,  3, 11, 20,
+     
+     19,  4, 18, 19,  4,  2, 13, 16,  4, 17, 13,  8, 13,  1,  8, 11, 20,  6, 20,
+      2, 11,  8,  5, 11, 19,  8, 15,  8, 11, 15,  9,  5, 15,  9, 10,  9, 20,  3,
+      6, 17, 15,  6, 10,  4,  4,  1, 20, 14,  9,  9, 19, 12, 15,  1,  6, 13, 20,
+     14,  3, 18,  8, 19,  5,  4, 15,  7,  3,  2,  2,  5, 14, 14, 14,  2,  8, 14,
+     12,  6, 20,  5, 18, 16, 16,  9, 11, 10,  3, 14,  5,  7, 18, 20,  8, 10, 13,
+     
+      1, 11,  3, 10, 20, 10, 12, 19, 19, 10, 14, 12, 17, 12, 14, 10, 15, 16, 11,
+      4,  5,  8, 11,  8,  8, 13, 13, 11, 13, 11, 17,  7, 16,  5, 11, 14, 18,  6,
+      5,  7, 12,  3, 19, 20,  2,  2,  6, 14, 11, 14,  5,  8, 15,  9, 13,  8,  7,
+     12, 18, 16,  8, 11,  3, 17, 10, 14, 15, 17,  2, 18,  9, 17, 16, 14,  4,  4,
+     10, 13, 17, 17,  8,  9,  1, 19, 11,  3,  4,  8, 10,  8,  4,  1, 13, 17, 13,
+     
+      5, 11,  4, 15,  8,  1,  2, 15,  8, 17, 16, 16, 15, 14,  4,  5, 11,  1, 15,
+     15, 17,  4,  4,  5,  5,  2,  1, 15, 18, 16,  7,  1, 15, 18,  9, 12, 11,  9,
+      8, 13,  9,  8,  8,  8, 12,  8, 16,  3,  7, 16,  9, 13, 12, 10, 20,  2,  2,
+     17, 10,  8,  8,  1,  4, 16,  4, 15, 14, 18, 19, 12,  8,  5,  1,  1,  9,  2,
+     19, 15, 12, 13, 10, 10, 11, 12, 16, 12, 15,  2, 18,  8, 14, 20,  3, 14, 12,
+     
+      9,  4, 19,  1, 20,  6, 14,  9,  1, 12, 18,  7, 12,  1,  2, 19, 18,  4,  9,
+      6, 15,  3, 13, 12, 20,  8,  4,  4,  8, 13,  6,  2,  5,  5, 19, 15, 17,  7,
+     20,  7, 12,  4, 18,  5, 20,  6, 13,  4,  1,  7,  2,  3,  3,  4, 20,  5, 17,
+     11,  7, 13,  5, 10,  4,  3,  5, 10, 11,  9,  5, 18, 17,  1, 17,  3,  8,  9,
+     14, 20,  8, 13,  3,  8,  8, 10, 16, 12,  1,  8,  7, 11,  7, 11,  7, 14,  4,
+     
+      3,  5,  4,  8, 11, 12,  5,  6, 18,  8, 10,  8, 17, 16, 20,  7, 12, 10, 13,
+     12,  1, 17, 11,  2, 11, 16,  4, 16,  8, 16,  4, 19, 12,  9,  4,  7, 19,  9,
+     18,  3,  8,  6, 10, 20, 12,  4,  7,  2,  1, 14,  5,  2, 19, 11,  3, 17, 15,
+      1, 17, 14, 17,  3, 16, 16, 17,  2,  2, 17, 15, 10,  5, 15, 20,  3,  7, 14,
+     16,  3, 12, 19,  1, 16,  9,  8,  5,  8,  1, 20,  3, 16, 13, 13,  2, 14,  6,
+     
+     20, 14, 14, 13, 19, 19, 15, 18, 17, 11, 13, 20,  9,  4, 14,  7,  2,  7,  5,
+      4, 10,  5, 15, 16, 13, 14,  9,  1, 11, 16, 16,  8,  7, 10,  8, 13, 19,  6,
+     12,  8, 15,  7,  2, 12,  8,  4,  2, 15, 15, 18,  4,  2,  3,  7, 15, 17,  5,
+      1,  5,  4, 19, 15,  6, 12,  8,  4,  4,  3, 20,  8,  9,  1,  4,  7, 12,  2,
+      9,  7, 16, 12,  1,  6, 14,  7,  4,  4,  4, 19,  2, 12, 16, 17,  2,  8, 15,
+     
+     15,  3,  2,  9,  3, 11, 20,  9, 19, 10,  2, 18,  7, 20,  5, 15, 20, 18,  2,
+     10, 15,  7, 12, 14, 14,  7,  4,  7, 10, 16,  3, 11, 19,  8, 16, 18,  6,  2,
+      5,  2,  6,  5,  4,  3, 12,  8, 20, 11,  8, 10, 17, 18,  7, 20,  5,  7, 19,
+      4, 12,  3, 17,  6, 11,  7, 20,  2, 16, 18, 19,  8,  3, 10, 14, 11, 17, 14,
+     19, 14, 14,  9, 14,  7, 10,  1,  8,  3,  5, 12, 16,  9,  9,  7,  2, 10, 13,
+     
+      2,  2,  7, 10,  8,  9, 12,  5,  3, 13,  5,  6,  1, 16,  4, 17, 12,  7, 10,
+      3, 14,  8,  6,  4,  9,  9, 19,  8, 18, 15, 10, 12, 12, 14,  4, 14, 17, 19,
+      9,  2, 19,  3, 16, 11, 12,  1,  9, 20, 12, 18, 14, 18,  6, 17,  8,  5,  1,
+      5,  9, 16, 19, 13, 19,  6,  6, 18, 15, 17,  6, 19, 12,  8, 17, 20, 16, 10,
+      7, 17, 11, 20, 19,  8,  9, 19,  4,  4, 17,  4,  6,  2,  5, 14,  9, 19,  9,
+     
+      2,  7,  1, 20,  9, 17, 13, 16, 18,  9,  5, 17, 11, 11, 14,  5,  8, 10, 10,
+      6, 15,  1, 14, 12,  5,  3, 14, 12, 13,  7, 17,  8, 15, 11,  5,  6,  1,  9,
+     17,  8,  4, 11, 18, 18, 14, 16, 16,  7,  5, 15,  5, 19,  3, 17, 10, 10, 16,
+     14, 16, 18, 16, 19, 10, 20,  1,  4, 12,  8,  9, 20,  2,  4,  7,  3,  8, 13,
+     18, 13,  4, 11, 12, 10, 12,  3, 16, 16, 15, 18, 19, 18,  5, 13, 14,  9,  4,
+     
+     10,  7, 17, 18, 17, 15, 13,  5, 20,  5,  7, 18,  4,  2, 14, 11, 20, 17, 18,
+      6, 13, 13, 19,  9,  8,  7, 14, 15, 13,  4, 15, 17,  4,  6,  8, 14, 12, 18,
+      2,  4, 16, 19, 18,  9,  5, 10, 14, 12,  9,  8,  6,  2,  4,  1, 11, 13, 10,
+      7,  1, 18,  1,  3,  5, 14, 14, 19,  3, 17,  5,  6, 12, 17,  2, 20, 11,  9,
+      5, 15,  2, 12,  6, 15,  2,  8,  8,  1,  4, 16, 11, 13, 11,  4, 17, 17,  2,
+     
+      7, 16, 15, 19, 14, 15, 14, 11, 11, 18, 18, 17, 17, 19,  8, 18,  2,  4, 17,
+     11,  3,  9,  1,  9, 19, 19, 12,  9, 11, 17, 14,  7, 10, 10, 17,  4,  3, 13,
+      3,  5,  3,  2,  1,  9, 13, 20,  4, 12,  2, 12, 18,  9,  1,  7,  5, 13, 11,
+     17,  9, 11,  8, 17,  8,  9,  5,  9, 16, 15, 11, 14, 12,  1, 15,  1, 20, 13,
+     12,  1,  7,  9, 19,  2, 13,  9, 15,  3, 17,  4,  8,  4, 12,  6,  4, 14,  6,
+     
+     18, 15,  3, 16, 16, 20,  8,  4, 11, 17,  9, 13,  4,  7,  7, 18,  7,  1,  6,
+      8,  7, 17,  9, 11,  6, 14,  6, 17,  2,  6,  6,  3, 13, 14,  3, 10, 13, 17,
+     13,  2,  5, 16, 14,  4,  6, 12,  6, 18,  5,  7, 18,  2, 17, 15, 10, 10, 13,
+      5, 13,  2, 11,  2, 15,  9,  7,  2,  3, 17,  7,  9, 12, 15, 20, 14, 20,  4,
+     20, 18, 20,  4, 19, 16, 15, 18,  7,  4,  5, 17,  7,  3, 16,  7,  5,  5, 20,
+     
+     15, 10, 11,  7,  8, 14, 10,  9, 10, 14,  9, 12, 12, 16,  5, 19, 18, 19, 14,
+      3,  5,  8, 16, 15,  9, 17, 11, 17,  2, 15, 18,  8,  8, 16, 18,  8,  5,  7,
+     10, 15, 13, 18, 16,  7,  9, 19, 17, 17, 13,  2,  1,  6, 12, 17,  8, 15,  2,
+      4,  4, 10, 18,  9, 20, 15,  5,  9,  2, 16,  3,  9, 13,  9, 19,  8, 20,  8,
+     10, 12, 14,  7,  9, 10, 14, 15, 11,  9, 19,  7, 11,  6,  5,  7, 19,  1,  5,
+     
+      2, 10,  3, 15,  5, 11, 13,  9,  4, 13,  8,  3,  8,  8, 16, 16, 14, 14,  1,
+     17, 10, 19, 19,  7,  3,  8,  3,  5, 11,  5,  5, 20, 16,  7,  6,  8, 16, 18,
+      4, 12, 10, 19, 20,  9, 18,  1, 18, 18, 13,  8,  1, 20, 13,  8, 17,  1, 15,
+     17,  2, 17,  1, 14, 12,  5,  5,  5,  1, 12, 16, 14,  4,  5, 19, 13,  2, 20,
+     12, 13, 11,  5, 20, 14,  7, 14,  7, 14, 15,  2, 10,  2, 11, 16, 13, 17, 10,
+     
+      1, 14,  2, 15, 11, 13, 10, 13,  5, 14, 20,  4, 12, 15,  7,  8,  4, 13,  5,
+      2,  7,  2,  2, 14,  8,  6, 18,  8,  9,  5,  2, 19,  7,  1, 12, 15, 19,  3,
+      9, 12,  2, 12, 12, 16, 19, 13, 12,  9,  5,  4,  4,  3,  3, 12,  8,  9, 20,
+      8,  5, 20, 19, 14,  4, 13,  7, 12,  1,  4, 14, 12, 14,  8,  4,  9, 18, 18,
+      9,  1, 20, 20, 20,  2,  8, 19, 13, 13,  9, 13, 13, 10, 13,  1,  8, 20, 13,
+     
+      8, 17, 10,  6,  6,  9,  4, 12,  9,  8, 16, 19,  9,  7,  8,  2, 11,  9,  8,
+     16,  9, 11, 10, 10,  7, 12, 15, 19,  9,  5, 14,  4, 12,  8, 13, 13, 17, 16,
+     14, 15, 19, 18,  9, 19, 15, 10, 17, 12, 13,  9,  8, 12,  1, 20, 11, 10,  7,
+     11,  9,  7,  7,  5,  4,  7, 12,  4, 13, 15, 18,  5,  7,  1, 13, 19,  8,  1,
+     15,  8,  6, 18,  7,  2, 11, 11, 15,  9,  6, 10,  5, 20, 18, 13,  5,  1, 12,
+     
+     13,  1,  7,  7, 17,  8, 20, 11,  7, 20,  5, 12, 14, 18, 20, 18,  2,  3, 12,
+     11, 20,  9,  9, 17,  9,  3,  5,  5,  5, 15, 13,  8,  2, 17,  7,  8,  4,  6,
+      5,  9, 17, 20,  5, 16,  6, 15
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(teal2_d20_df, set_fill_map["teal2"])
+```
+
+
+```{r mushroom-d20}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[7] & dice_setup$die == dice[7], "sample_size"] / 19
+
+mushroom_d20_df <- # want: 1851 rolls
+  data.frame(
+    set = sets[7],
+    die = dice[7],
+    result = c( # 19 per full row
+      4, 17,  9, 19, 10,  3, 19, 15,  2, 14, 18, 11,  1, 12,  2, 11, 11, 20, 12,
+     15,  5, 12,  7, 19, 20,  3,  9,  4, 13, 19, 15, 15,  5,  5, 11, 19, 16, 16,
+     17, 19, 11, 11, 15, 13, 15,  5,  1,  1,  2,  2, 11,  7, 10,  9,  5,  1, 11,
+      5, 13,  6, 19, 11,  4, 16,  2, 12,  2, 10,  7, 16, 20, 17,  5, 13,  1,  6,
+      2,  7, 17,  2, 19, 20, 15,  7, 17, 18, 13, 12, 18, 12,  4, 13,  2,  1, 19,
+     
+      5,  8,  7, 19,  1,  1, 19,  4,  2, 10, 17, 17,  5, 18, 12, 17, 15,  5, 19,
+      4, 14, 11, 19, 16,  1,  8, 12, 19, 18, 14, 10, 16,  1,  3,  6, 19, 12,  9,
+     16, 11, 13, 20, 14, 17, 20, 15,  2,  5,  6, 13, 16, 19,  2,  8, 20,  6,  1,
+     16, 19, 11, 18, 20,  8, 16, 19,  9, 19, 19,  6, 12, 20, 19, 10,  9, 20, 11,
+     17,  7, 11, 14, 11,  9,  9, 20,  6, 16,  7, 11, 19,  3,  9,  6, 18,  7,  4,
+     
+      4,  4, 15,  4, 20,  9, 13,  6, 13,  6,  7, 15,  1, 16, 11,  5, 18, 16, 17,
+      1, 12, 19,  3,  6,  9,  8,  3, 10, 17, 10, 11,  7, 19, 14,  8, 13, 16, 10,
+      6, 12,  4,  1, 14, 11, 13,  2, 12, 16, 17, 14, 20, 16, 15, 16,  7,  1, 20,
+     20,  8,  9,  4,  6,  4,  6,  5, 15,  6,  7, 11, 18, 12, 13, 12, 15, 16, 16,
+      3, 19, 20,  6,  6, 19, 12, 13,  9, 17,  5,  8, 17,  7, 11, 20,  1, 12, 11,
+     
+      1, 19, 17, 10, 19,  6, 10,  9, 20, 15, 10, 16, 17,  9, 11,  1,  1, 12, 20,
+     15, 11, 13,  1,  9, 18, 12,  1,  6, 13,  4, 16,  3, 11, 17,  1,  5, 19, 10,
+     19,  8,  7, 14, 17,  4, 19,  2,  2, 14,  5,  9,  9, 13, 19,  4, 20, 20,  5,
+     12, 12,  2,  4, 13,  2, 10, 10, 12, 18,  3, 16,  9, 20,  4, 18,  6,  3, 16,
+     19, 10,  5,  4,  7, 19,  4, 19, 20,  9,  4, 20,  2, 13, 12,  5, 12,  1, 14,
+     
+      1, 17, 14,  3,  8, 12,  7, 12,  1, 14, 11, 14, 19,  4,  9, 14, 17,  8, 20,
+     20,  3,  2, 10, 17, 11, 17, 20,  1,  9, 16, 13, 20, 16,  1, 20, 10,  6, 20,
+     10, 20, 20, 10, 19,  3,  3, 10,  5, 18, 13, 15, 19,  4,  8,  8, 12,  9,  8,
+      3,  5, 20,  8,  3, 17, 15,  1,  7, 20, 14,  9,  6, 14,  8,  3, 19, 11,  8,
+     13, 19, 13, 19,  3, 13,  3, 20,  3, 10,  9, 17, 10,  2,  4, 15,  8, 18, 11,
+     
+     17, 14, 19,  9,  8,  6, 11,  5, 14, 17, 14, 12,  5, 15, 15, 14,  9, 16,  7,
+      3, 14, 20, 11,  7, 14,  9, 12,  3, 11, 14,  7,  7,  3,  8,  9,  8,  3,  3,
+     17, 12, 16,  1, 19,  1, 11, 19,  6, 20,  4,  7, 11,  5, 13,  7,  3,  4,  8,
+      3,  1, 17,  2, 10, 10, 15, 11,  4, 19, 19, 20,  2, 20, 17, 12, 20, 15,  6,
+     19,  1, 12, 13, 11, 14,  2, 18,  4, 16, 16, 14, 18, 11, 13, 19, 18, 14, 11,
+     
+     12, 14,  7, 17, 19,  8, 10,  3, 14,  1, 15,  6,  9, 17,  1,  6, 10,  1, 13,
+     15,  9,  7, 18,  7, 19,  9, 11, 14, 15,  2, 14, 19, 11, 17,  9, 20,  3, 16,
+      4, 11, 20, 19,  1, 10, 11, 20, 11, 18,  9,  9, 11, 12, 12,  3,  4, 13, 19,
+     15, 16, 17,  9,  8,  2,  6, 12, 19,  2, 12, 19,  7,  5, 18,  8,  6,  9, 17,
+      4, 16, 11, 14,  9, 10, 19,  8, 14, 19,  4,  9,  4, 19,  1, 17,  1, 20, 19,
+     
+      3, 13,  9, 12, 20, 14, 12, 15, 16,  2,  8, 18,  9,  2,  3, 20,  6,  3, 19,
+     16, 20,  5,  1, 12,  5,  6, 15, 20,  4, 13, 14, 16, 11,  7,  4, 15,  7,  8,
+      1,  6, 18,  3,  6, 18,  8, 18,  6, 11,  2, 20,  6, 15,  5,  8, 20, 13, 10,
+      5,  4, 14, 10,  9,  4, 20,  1,  8, 12,  7,  6, 10,  4,  7, 19, 20,  3,  3,
+     15,  6, 17, 18,  3, 12, 20, 13, 10,  8, 20, 20, 13,  5,  4,  7,  1, 14,  4,
+     
+      6, 12, 11, 19, 14,  9, 18, 18,  3, 10, 18,  3, 17,  7,  4, 18,  9,  2,  9,
+      1, 19, 12, 12, 20,  8, 20, 19,  1, 12, 17, 12, 18,  4, 15,  7, 18,  2,  6,
+      5, 13,  2,  2,  5,  9, 12, 12, 20, 17,  3, 15, 17, 19, 19,  8, 12,  7, 10,
+      7,  8, 17,  3, 20,  5,  4,  9,  1, 11, 12, 20, 10,  3,  1,  5, 16, 16,  4,
+      4, 12, 12, 14,  3,  2, 20,  7, 20,  6,  2,  9,  2, 19,  3, 15,  9, 15, 15,
+     
+     18,  4, 11,  6,  4,  4,  8, 10,  9,  8, 17, 12,  1, 10,  2, 11,  7, 11, 14,
+      9, 10,  9,  7,  3, 19, 13,  4, 20, 20, 18, 18,  8,  9,  7, 19,  6, 11, 15,
+     15,  9,  1,  1,  7, 18,  4, 11, 12,  1,  9,  9,  2, 13,  6, 18,  8,  3,  8,
+     17, 20,  9, 14,  1, 15, 20,  5, 19, 18, 14, 17,  1,  1,  7, 10, 12, 19, 13,
+     17,  9, 12,  7,  9, 11,  6,  8, 19,  2, 15, 17, 11,  3, 20, 12, 10, 13, 10,
+     
+      7,  8, 10, 10, 15, 17, 20,  2,  6, 18, 16,  3, 15, 17, 12,  5, 19,  6, 16,
+     12, 18,  4,  3,  2, 11, 20, 11, 11, 19, 11,  3, 20,  1, 13,  8,  9, 18,  5,
+     19,  7,  5, 18,  5,  3, 10,  6, 19,  7, 18,  9, 10, 15, 15, 12, 17,  5, 19,
+     19,  1,  1,  5, 11, 16,  3,  1,  4,  9, 11,  2, 19, 10,  9,  4, 14,  3, 10,
+      7, 20, 15, 19,  8, 13, 19,  9, 13,  1, 15, 15,  1,  2, 11,  4,  7, 13,  9,
+     
+      4, 12, 19, 14, 11,  4,  2,  2, 10, 16, 16,  9, 18,  6, 18, 17,  8,  4, 13,
+     19, 20, 19, 14, 17,  2, 12, 17, 11,  2, 20, 11,  8, 15,  7, 17,  3,  6, 10,
+      9,  6,  3, 15, 20, 14, 15, 16, 15, 12,  7,  1, 11, 16,  1, 16,  2, 17, 13,
+      2,  6, 19,  6,  5, 18, 18, 13,  9, 14,  3, 19,  6, 19, 18, 16, 19,  2, 17,
+      2,  4, 19,  3, 14,  4,  4, 20, 20, 15,  7, 17,  9,  5, 13, 15, 14, 19,  2,
+     
+     14, 13,  4,  1, 15, 13, 17, 19, 10,  4, 11,  7, 19, 17, 19,  2,  6, 19,  6,
+      6, 18, 15,  6,  1, 11, 13,  1, 19, 13, 15, 16,  5,  7, 16, 12,  2, 18,  4,
+     18, 12,  9, 12, 13,  1, 10, 19, 12, 17, 14,  9,  4, 15,  5, 20, 11, 11,  8,
+     17, 12,  4, 18, 18,  8,  7, 11,  9, 11, 17,  5,  7, 10, 15,  5, 10, 13,  5,
+     20, 17, 16,  2, 16, 18,  1,  2,  2,  3,  7, 19, 11, 14,  5, 14, 11, 18,  4,
+     
+     20, 14, 14, 15,  5, 11,  8, 14, 13,  3, 16, 13,  6,  2,  7, 20, 11, 20, 16,
+      7, 18, 11, 10, 15,  5,  7, 18,  3,  8,  8, 17, 19,  5, 11, 13,  6, 18,  5,
+     10, 18, 17,  4, 13, 10,  4, 15, 10,  5, 19, 19, 11,  4, 14, 13, 11,  3, 19,
+      6, 10, 13, 15, 14, 12, 17, 16, 18, 14, 16, 20, 13, 18,  8,  9, 12,  2, 15,
+      9, 10,  3,  4, 11,  2, 19,  4, 13,  4,  5,  7, 19,  6,  8,  7,  2,  9, 14,
+     
+      8, 16, 17,  1, 15,  5, 15,  7,  5, 20,  3, 18, 11, 19,  3, 17,  6,  8, 11,
+      1,  5, 15,  6,  9,  2, 19,  4,  2,  8, 19, 16, 17,  1, 11,  5, 15, 13, 12,
+     13, 20, 11, 16,  8, 20,  6,  4, 11, 11,  9, 18, 16,  5, 18, 18, 18,  6,  1,
+      7,  4,  7,  5, 13, 11, 11, 13,  3,  1, 18, 19,  7, 11,  7, 13,  8,  2,  1,
+     19,  3, 13,  2, 17,  8,  4, 19, 16,  7,  1,  3,  5, 15,  3,  4,  7, 18, 20,
+     
+      6,  7, 18, 11, 11, 11, 13, 13,  7,  5,  3, 13, 16, 12,  8, 20,  1,  9, 18,
+     19, 15, 17,  7,  6, 10, 20, 15, 14,  3, 14,  1, 13, 15, 18, 18,  5, 15, 11,
+      6, 20,  8, 12,  2,  3, 17, 19, 15,  7, 20, 11, 17,  6, 16, 16, 15, 11,  1,
+     17,  2, 18,  4, 19, 10, 11,  3,  5, 11, 19,  1,  1,  9,  3, 13, 20,  6, 13,
+     10,  7,  9, 15, 18, 12, 17,  5, 10, 18, 18,  3, 20, 17, 12,  1, 12, 20,  8,
+     
+     18, 11,  5,  4, 15, 12, 16, 19, 10, 15,  7,  2,  7, 19,  6, 18, 10, 16,  8,
+      2, 19, 17, 20,  1, 13, 15, 10, 16,  9,  9, 19,  7,  5,  7,  3,  7, 17,  9,
+     12,  9, 13, 19,  3, 13,  3,  1, 11, 17, 15,  1, 18,  1, 15,  7,  4, 11, 12,
+      9, 16,  5, 17,  4,  1,  1, 10, 18, 18, 20,  2, 18,  3, 20,  7,  3, 13,  3,
+      7, 20, 20,  7,  9,  6, 14,  9, 15, 14, 20,  9,  7, 17, 11, 11,  1,  4,  7,
+     
+      3,  3, 18,  2, 20,  7,  5, 11, 14, 14,  9,  4,  4,  9, 19,  4, 14, 11,  6,
+      4,  9,  8,  8,  5,  2, 13, 11, 13, 19, 13,  6, 17,  4,  4,  3, 18, 20,  2,
+     15,  3, 20, 11, 15, 14, 14, 18,  9,  2, 17, 17, 13, 20, 10, 18, 19, 11, 11,
+     14,  1, 19, 20,  3, 10, 13,  7,  3, 19,  1,  5,  8, 10, 19, 16, 16,  3, 14,
+      6,  8,  1,  7, 17, 16,  1,  4, 15, 19, 17,  4, 17,  9,  1,  2, 10, 10, 12,
+     
+     20,  3, 20, 13,  7, 18,  7,  1,  6, 14,  1,  5, 20,  7, 18,  4, 10,  8,  1,
+      5, 10, 18, 13, 14, 13, 15, 16, 17, 14,  1, 13,  9,  3, 15,  3,  1,  7, 15,
+      7,  1,  3,  8, 20,  2,  5,  8,  1, 16,  1, 11,  1,  2, 11, 20,  9, 14,  1,
+     10, 19,  5, 15,  6,  2, 20, 10, 17, 17,  4, 18,  8,  3, 11, 15, 10, 19, 16,
+     12, 18,  5,  9, 19, 17, 17,  1,  1,  1,  9,  6, 20,  2,  9,  4, 17,  1, 19,
+     
+      6, 20, 14,  7, 19, 10,  3, 16,  8,  5,  2,  2,  9, 19, 18,  9, 13,  4, 19,
+      9,  1,  7,  1,  3, 19, 13,  2, 15,  9, 13, 13,  3,  7,  4,  1, 16, 18, 19,
+     14,  7,  1,  7,  3,  1,  3, 13
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(mushroom_d20_df, set_fill_map["mushroom"])
+```
+
+
+### Aubergine Dice
+
+```{r aub-d4}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[8] & dice_setup$die == dice[1], "sample_size"] / 25
+
+aub_d4_df <- # want: 197 rolls
+  data.frame(
+    set = sets[8],
+    die = dice[1],
+    result = c( # 25 per full row
+      2, 3, 1, 3, 2, 1, 3, 1, 2, 3, 3, 2, 1, 3, 2, 3, 2, 3, 2, 1, 1, 2, 4, 4, 2,
+      3, 4, 3, 1, 1, 3, 3, 1, 4, 1, 4, 2, 2, 4, 2, 1, 3, 1, 1, 1, 3, 1, 3, 3, 4,
+      4, 4, 3, 2, 2, 1, 2, 3, 3, 2, 4, 2, 3, 4, 1, 3, 3, 4, 2, 1, 2, 3, 2, 2, 1,
+      2, 4, 1, 1, 3, 2, 3, 1, 4, 2, 2, 4, 2, 4, 3, 4, 1, 1, 4, 4, 4, 4, 2, 2, 4,
+      1, 4, 1, 1, 1, 3, 1, 4, 3, 4, 1, 1, 3, 1, 4, 2, 4, 1, 4, 4, 2, 3, 3, 4, 2,
+      
+      3, 4, 2, 4, 3, 2, 3, 4, 1, 2, 1, 4, 4, 4, 1, 2, 1, 4, 3, 4, 2, 1, 3, 1, 1,
+      4, 2, 2, 3, 1, 3, 3, 1, 4, 4, 3, 4, 4, 1, 2, 3, 4, 1, 3, 4, 2, 2, 1, 4, 4,
+      4, 1, 2, 1, 1, 3, 3, 2, 1, 3, 4, 2, 3, 2, 4, 1, 4, 4, 2, 4, 1, 2
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(aub_d4_df, set_fill_map["aubergine"])
+```
+
+
+```{r aub-d6}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[8] & dice_setup$die == dice[2], "sample_size"] / 25
+
+aub_d6_df <- # want: 347 rolls
+  data.frame(
+    set = sets[8],
+    die = dice[2],
+    result = c( # 25 per full row
+      6, 4, 2, 5, 4, 6, 5, 3, 4, 1, 6, 6, 2, 6, 5, 4, 6, 6, 5, 4, 3, 1, 5, 6, 3,
+      3, 2, 6, 5, 4, 3, 2, 2, 1, 2, 3, 3, 1, 2, 3, 2, 6, 4, 6, 2, 5, 4, 1, 5, 5,
+      5, 3, 2, 4, 4, 5, 1, 1, 1, 3, 2, 4, 4, 1, 2, 3, 6, 6, 3, 1, 1, 3, 5, 2, 6,
+      1, 3, 5, 5, 3, 4, 5, 3, 2, 5, 5, 3, 4, 1, 5, 4, 1, 2, 4, 5, 5, 2, 4, 3, 4,
+      2, 5, 6, 6, 5, 5, 4, 5, 5, 3, 3, 5, 4, 2, 4, 1, 6, 4, 6, 2, 1, 2, 6, 6, 4,
+      
+      2, 1, 5, 6, 2, 6, 3, 1, 4, 3, 5, 5, 2, 5, 1, 4, 2, 3, 4, 3, 1, 2, 6, 5, 2,
+      6, 1, 1, 2, 2, 3, 4, 5, 2, 2, 3, 2, 3, 2, 5, 1, 3, 5, 3, 6, 3, 5, 6, 4, 6,
+      3, 2, 6, 1, 2, 4, 2, 3, 6, 3, 2, 4, 5, 1, 4, 3, 6, 6, 4, 1, 5, 6, 3, 3, 6,
+      1, 5, 6, 1, 2, 3, 2, 1, 3, 3, 3, 5, 3, 3, 1, 6, 1, 4, 2, 6, 4, 6, 3, 2, 3,
+      2, 5, 2, 1, 6, 5, 6, 3, 1, 5, 5, 2, 5, 2, 1, 4, 2, 5, 1, 4, 3, 6, 2, 1, 4,
+      
+      6, 5, 1, 5, 3, 3, 4, 6, 3, 4, 4, 2, 4, 4, 3, 2, 5, 5, 4, 6, 6, 5, 5, 6, 1,
+      4, 1, 4, 1, 4, 1, 3, 4, 3, 6, 2, 2, 5, 1, 5, 4, 2, 5, 1, 2, 1, 2, 1, 1, 2,
+      4, 2, 1, 4, 5, 2, 1, 3, 2, 2, 6, 2, 1, 2, 6, 3, 1, 1, 3, 6, 5, 1, 2, 6, 5,
+      6, 1, 6, 3, 2, 5, 1, 4, 5, 3, 1, 2, 2, 5, 1, 2, 3, 4, 2, 4, 5, 1
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(aub_d6_df, set_fill_map["aubergine"])
+```
+
+
+```{r aub-d8}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[8] & dice_setup$die == dice[3], "sample_size"] / 25
+
+aub_d8_df <- # want: 517 rolls
+  data.frame(
+    set = sets[8],
+    die = dice[3],
+    result = c( # 25 per full row
+      5, 5, 6, 1, 1, 5, 5, 6, 5, 4, 7, 8, 1, 1, 8, 5, 7, 3, 5, 6, 7, 3, 5, 8, 6,
+      8, 8, 5, 2, 8, 6, 4, 6, 5, 8, 3, 5, 3, 7, 6, 2, 7, 3, 5, 3, 5, 5, 7, 6, 3,
+      8, 1, 1, 7, 7, 5, 5, 8, 6, 5, 6, 3, 7, 1, 6, 7, 6, 7, 7, 7, 5, 8, 4, 7, 2,
+      5, 7, 5, 7, 5, 3, 8, 6, 8, 8, 8, 7, 8, 6, 1, 1, 8, 6, 2, 2, 1, 6, 3, 6, 4,
+      6, 1, 1, 1, 8, 8, 1, 6, 3, 4, 4, 7, 5, 7, 5, 2, 2, 2, 1, 2, 7, 2, 2, 5, 3,
+      
+      4, 3, 1, 8, 6, 1, 1, 2, 4, 4, 4, 2, 7, 7, 8, 6, 2, 7, 1, 7, 8, 8, 3, 4, 4,
+      2, 2, 3, 4, 1, 7, 1, 8, 1, 3, 8, 1, 4, 3, 6, 6, 4, 8, 2, 6, 5, 2, 6, 1, 5,
+      5, 5, 6, 6, 7, 2, 6, 6, 5, 1, 3, 4, 3, 4, 8, 2, 4, 3, 7, 7, 6, 3, 3, 7, 5,
+      3, 6, 6, 8, 6, 1, 4, 4, 1, 2, 3, 7, 6, 2, 2, 8, 6, 3, 6, 5, 3, 2, 5, 4, 2,
+      4, 2, 4, 3, 2, 7, 1, 4, 5, 6, 1, 3, 1, 2, 5, 8, 6, 4, 6, 3, 2, 5, 6, 4, 3,
+      
+      3, 6, 6, 1, 3, 8, 7, 7, 5, 3, 1, 7, 7, 3, 8, 6, 4, 3, 4, 3, 5, 6, 2, 5, 4,
+      2, 5, 2, 1, 4, 7, 7, 2, 4, 4, 7, 6, 6, 7, 3, 2, 7, 2, 2, 5, 2, 8, 3, 1, 1,
+      5, 4, 5, 5, 8, 4, 8, 7, 7, 2, 3, 2, 5, 1, 5, 1, 4, 2, 4, 3, 1, 8, 1, 6, 3,
+      4, 2, 4, 7, 6, 6, 5, 5, 5, 2, 5, 5, 7, 1, 6, 5, 6, 8, 3, 1, 7, 5, 3, 6, 6,
+      1, 3, 1, 6, 2, 3, 3, 8, 1, 3, 8, 1, 6, 8, 3, 3, 1, 8, 4, 8, 6, 7, 4, 3, 2,
+      
+      4, 4, 8, 6, 1, 4, 3, 4, 5, 1, 3, 3, 3, 1, 8, 1, 8, 1, 4, 8, 6, 7, 4, 4, 7,
+      2, 5, 2, 6, 2, 8, 7, 3, 1, 8, 5, 8, 8, 7, 3, 1, 5, 4, 8, 8, 1, 4, 5, 1, 7,
+      5, 5, 6, 5, 3, 3, 4, 8, 2, 4, 4, 2, 6, 8, 2, 2, 7, 8, 2, 8, 2, 4, 5, 5, 5,
+      3, 1, 7, 4, 2, 6, 6, 6, 2, 2, 2, 4, 8, 8, 8, 1, 3, 7, 2, 1, 6, 6, 7, 5, 2,
+      2, 4, 4, 2, 2, 6, 4, 4, 3, 7, 4, 1, 5, 3, 2, 4, 8, 3, 6, 8, 6, 8, 5, 2, 6,
+      
+      2, 1, 8, 8, 7, 7, 3, 7, 8, 4, 5, 7, 4, 8, 3, 6, 5
+      )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(aub_d8_df, set_fill_map["aubergine"])
+```
+
+
+```{r aub-d10}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[8] & dice_setup$die == dice[4], "sample_size"] / 25
+
+aub_d10_df <- # want: 705 rolls
+  data.frame(
+    set = sets[8],
+    die = dice[4],
+    result = c( # 25 per full row
+      7, 0, 6, 3, 2, 2, 5, 2, 4, 0, 0, 0, 1, 6, 4, 8, 1, 6, 8, 5, 2, 1, 0, 9, 4,
+      8, 1, 1, 9, 9, 8, 4, 8, 4, 9, 4, 1, 9, 7, 9, 1, 2, 8, 7, 5, 7, 4, 6, 7, 6,
+      2, 8, 9, 6, 9, 4, 7, 6, 3, 5, 5, 1, 3, 3, 0, 1, 9, 4, 6, 3, 6, 0, 7, 9, 7,
+      9, 2, 9, 4, 8, 9, 7, 7, 9, 5, 3, 3, 8, 7, 1, 6, 5, 0, 0, 7, 9, 0, 3, 7, 3,
+      0, 1, 9, 4, 8, 6, 9, 0, 4, 0, 8, 5, 4, 3, 4, 8, 1, 7, 8, 9, 2, 3, 7, 2, 3,
+      
+      8, 9, 3, 6, 2, 9, 4, 8, 0, 3, 8, 7, 7, 1, 7, 1, 1, 6, 4, 9, 4, 1, 6, 5, 8,
+      2, 1, 5, 8, 8, 1, 4, 7, 1, 1, 0, 9, 4, 5, 8, 3, 9, 1, 6, 7, 8, 6, 6, 0, 0,
+      0, 0, 7, 9, 4, 8, 6, 2, 8, 7, 4, 0, 1, 5, 2, 3, 5, 1, 8, 0, 5, 0, 1, 9, 4,
+      9, 6, 1, 6, 0, 5, 9, 7, 9, 3, 9, 9, 9, 9, 5, 2, 8, 2, 0, 1, 7, 7, 6, 4, 8,
+      2, 5, 7, 1, 6, 9, 0, 8, 8, 0, 5, 8, 3, 5, 6, 3, 3, 8, 6, 0, 3, 8, 1, 4, 9,
+      
+      9, 2, 8, 0, 8, 1, 9, 9, 9, 0, 4, 4, 8, 1, 7, 7, 6, 8, 6, 3, 6, 5, 2, 6, 9,
+      2, 5, 9, 1, 3, 6, 1, 7, 5, 3, 7, 1, 6, 1, 4, 8, 8, 9, 5, 4, 6, 9, 2, 5, 9,
+      5, 9, 1, 3, 2, 1, 5, 4, 2, 1, 3, 8, 2, 4, 7, 1, 8, 5, 8, 1, 2, 3, 8, 9, 1,
+      0, 6, 5, 9, 7, 8, 4, 5, 6, 4, 7, 8, 9, 8, 7, 9, 6, 2, 8, 5, 1, 6, 3, 2, 8,
+      6, 1, 0, 5, 9, 1, 2, 3, 0, 0, 4, 2, 1, 8, 4, 3, 8, 5, 6, 3, 5, 3, 2, 8, 9, 
+      
+      1, 0, 4, 9, 9, 7, 1, 4, 6, 6, 6, 8, 1, 6, 7, 2, 1, 8, 8, 8, 5, 4, 6, 6, 4,
+      2, 0, 9, 8, 7, 8, 6, 7, 1, 6, 2, 3, 0, 9, 4, 9, 8, 0, 9, 9, 7, 4, 6, 7, 0,
+      4, 4, 5, 8, 8, 6, 0, 7, 3, 7, 0, 1, 9, 9, 7, 9, 8, 0, 6, 9, 1, 6, 2, 3, 6,
+      1, 6, 6, 3, 9, 6, 2, 1, 0, 5, 7, 1, 3, 5, 4, 5, 8, 1, 4, 0, 4, 9, 9, 9, 4,
+      8, 8, 0, 3, 4, 1, 3, 5, 3, 4, 2, 4, 0, 3, 8, 6, 9, 3, 2, 5, 5, 5, 4, 6, 1,
+      
+      1, 8, 9, 0, 6, 9, 4, 0, 0, 9, 6, 2, 4, 6, 9, 2, 5, 4, 5, 4, 8, 5, 7, 1, 5,
+      6, 1, 8, 9, 6, 3, 9, 7, 8, 1, 8, 1, 0, 4, 2, 9, 4, 2, 6, 1, 1, 3, 8, 3, 9,
+      1, 3, 5, 4, 8, 7, 5, 0, 2, 2, 0, 2, 5, 4, 1, 4, 4, 0, 0, 5, 3, 0, 0, 9, 7,
+      1, 2, 9, 1, 8, 5, 7, 3, 7, 5, 7, 1, 3, 8, 9, 3, 7, 3, 9, 4, 2, 7, 8, 4, 6,
+      1, 8, 0, 3, 2, 8, 3, 4, 7, 9, 9, 0, 5, 3, 0, 9, 7, 1, 2, 0, 2, 6, 4, 0, 0,
+      
+      7, 0, 4, 5, 7, 5, 9, 6, 8, 0, 9, 8, 2, 7, 0, 4, 3, 6, 2, 0, 7, 8, 5, 3, 0,
+      8, 5, 0, 8, 7, 5, 1, 0, 5, 0, 5, 6, 7, 2, 9, 2, 6, 6, 1, 7, 7, 0, 7, 9, 9,
+      0, 0, 0, 6, 6, 2, 4, 0, 8, 4, 2, 8, 4, 5, 2, 7, 6, 8, 0, 0, 4, 2, 0, 5, 0,
+      6, 3, 0, 6, 7
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+aub_d10_df$result[aub_d10_df$result == 0] <- 10
+
+plot_result(aub_d10_df, set_fill_map["aubergine"])
+```
+
+
+```{r aub-dpct}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[8] & dice_setup$die == dice[5], "sample_size"] / 25
+
+`aub_d%_df` <- # want: 705 rolls
+  data.frame(
+    set = sets[8],
+    die = dice[5],
+    result = c( # 25 per full row
+      7, 7, 4, 8, 0, 6, 3, 6, 5, 0, 5, 9, 6, 9, 5, 1, 9, 7, 0, 2, 4, 9, 3, 4, 3,
+      9, 8, 0, 9, 0, 7, 2, 0, 8, 1, 2, 0, 8, 0, 3, 6, 1, 6, 7, 2, 8, 7, 4, 7, 0,
+      1, 5, 3, 6, 8, 5, 4, 5, 0, 5, 5, 0, 0, 6, 1, 2, 1, 3, 2, 1, 0, 5, 9, 7, 9,
+      8, 9, 1, 5, 0, 2, 0, 0, 4, 3, 9, 2, 2, 2, 0, 0, 4, 1, 2, 3, 0, 7, 7, 8, 4,
+      4, 5, 9, 3, 9, 9, 6, 9, 6, 2, 4, 6, 7, 9, 2, 7, 3, 7, 5, 9, 0, 8, 2, 2, 1,
+      
+      7, 2, 6, 9, 2, 2, 6, 4, 0, 6, 0, 7, 2, 5, 0, 2, 2, 8, 5, 7, 3, 8, 7, 9, 9,
+      6, 6, 2, 1, 2, 0, 7, 3, 0, 0, 0, 4, 3, 9, 7, 0, 2, 0, 9, 3, 6, 2, 6, 5, 2,
+      8, 5, 2, 4, 7, 9, 5, 2, 2, 8, 4, 4, 8, 3, 8, 1, 0, 8, 6, 5, 0, 4, 9, 4, 9,
+      1, 8, 4, 9, 1, 7, 1, 1, 0, 4, 1, 8, 9, 0, 1, 8, 6, 7, 4, 2, 7, 5, 7, 8, 7,
+      6, 6, 2, 1, 2, 6, 8, 4, 7, 4, 3, 0, 1, 3, 9, 2, 6, 3, 5, 1, 7, 6, 3, 5, 1,
+      
+      1, 7, 9, 6, 1, 1, 9, 0, 5, 5, 4, 0, 7, 9, 4, 3, 7, 2, 7, 7, 0, 8, 0, 4, 9,
+      9, 4, 9, 4, 1, 3, 9, 7, 5, 4, 2, 1, 7, 7, 5, 1, 0, 2, 9, 7, 5, 3, 7, 9, 0,
+      3, 9, 8, 4, 7, 1, 8, 1, 9, 2, 6, 7, 6, 8, 6, 1, 7, 9, 0, 4, 9, 0, 6, 7, 8,
+      4, 2, 4, 9, 3, 0, 5, 1, 5, 6, 1, 4, 7, 2, 1, 7, 4, 4, 3, 4, 2, 0, 1, 1, 5,
+      6, 3, 1, 2, 1, 9, 0, 8, 5, 4, 4, 9, 9, 9, 2, 6, 3, 9, 9, 5, 5, 7, 3, 7, 1,
+      
+      5, 5, 6, 8, 0, 8, 7, 8, 5, 9, 2, 7, 3, 9, 5, 9, 3, 9, 0, 4, 5, 1, 0, 3, 5,
+      1, 0, 8, 9, 6, 3, 9, 1, 3, 1, 0, 3, 1, 3, 7, 4, 0, 2, 1, 1, 0, 8, 3, 7, 5,
+      8, 2, 8, 1, 0, 6, 9, 4, 4, 3, 7, 1, 5, 7, 7, 0, 2, 3, 3, 9, 5, 3, 9, 7, 7,
+      1, 0, 5, 8, 2, 9, 4, 7, 7, 4, 1, 6, 9, 9, 2, 6, 6, 6, 1, 9, 3, 7, 8, 9, 3,
+      8, 6, 0, 2, 8, 2, 3, 6, 5, 1, 4, 6, 1, 9, 5, 3, 5, 3, 6, 1, 8, 0, 2, 6, 5,
+      
+      8, 3, 9, 7, 1, 7, 1, 6, 1, 5, 8, 4, 1, 6, 7, 5, 9, 8, 1, 7, 5, 1, 9, 5, 2,
+      6, 4, 9, 2, 6, 7, 5, 6, 2, 2, 0, 2, 0, 8, 5, 7, 1, 4, 5, 2, 3, 5, 4, 1, 2,
+      9, 2, 3, 1, 2, 5, 1, 1, 3, 5, 4, 4, 2, 3, 9, 7, 2, 5, 4, 9, 3, 1, 3, 5, 4,
+      3, 0, 7, 7, 3, 2, 2, 0, 5, 3, 0, 2, 3, 1, 1, 1, 9, 0, 8, 7, 2, 2, 1, 4, 3,
+      3, 6, 2, 1, 9, 9, 5, 4, 8, 6, 3, 5, 3, 2, 5, 8, 2, 5, 2, 6, 7, 2, 2, 7, 0,
+      
+      0, 9, 4, 7, 7, 7, 7, 4, 8, 3, 2, 1, 2, 3, 7, 2, 4, 1, 0, 2, 0, 4, 1, 9, 9,
+      4, 7, 0, 1, 8, 5, 1, 9, 4, 8, 9, 0, 4, 6, 3, 2, 2, 7, 4, 0, 8, 6, 5, 6, 3,
+      1, 9, 4, 1, 3, 9, 5, 9, 6, 2, 3, 3, 9, 0, 8, 5, 9, 7, 8, 2, 4, 2, 5, 5, 6,
+      8, 9, 0, 2, 2
+    )
+  ) %>% 
+  mutate(result = result * 10,
+         obs = 1:nrow(.))
+
+plot_result(`aub_d%_df`, set_fill_map["aubergine"])
+```
+
+
+```{r aub-d12}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[8] & dice_setup$die == dice[6], "sample_size"] / 19
+
+aub_d12_df <- # want: 908 rolls
+  data.frame(
+    set = sets[8],
+    die = dice[6],
+    result = c( # 19 per full row
+      7,  1,  2,  5,  2, 10,  1, 11,  9,  3,  9,  5,  7, 10,  3,  9,  2,  1,  3,
+      3, 10,  6, 12,  8,  1,  5, 11, 10,  6,  3,  5,  2,  4,  5,  8,  5,  1, 12,
+      1,  8,  2, 12,  2,  5, 11, 11, 11,  2, 10,  3,  9,  7,  3,  9,  2, 10,  6,
+      6,  9,  6,  7, 10,  1,  1,  2,  9,  8,  8,  1,  9, 12, 11,  7,  5,  7,  1,
+      9,  2,  3,  7, 10,  7,  8,  5, 12,  8,  4,  3,  4,  2,  6,  5, 10,  8,  2,
+      
+      6,  8,  8, 10,  1,  4, 11,  5,  7,  2,  5,  7, 11,  1,  7, 10,  6,  5,  9,
+     12,  7,  9,  3,  3, 11,  1, 12,  1,  5,  3, 11,  5,  7,  9,  6,  7,  7,  6,
+     10,  2,  6, 11,  3,  3,  4,  5,  1,  1,  8,  2,  5,  9,  1,  8,  3, 10,  8,
+      2,  3,  7,  8,  5,  2,  3, 10, 12,  1,  2,  3, 12, 11, 10, 11,  3,  1,  9,
+      4,  8,  6,  8, 10, 12, 10, 10,  3,  2,  4, 11,  8,  2,  3,  9, 10, 10, 10,
+     
+      8, 10,  5,  5,  8, 10,  9,  5,  3,  2,  8, 10,  3,  1,  3,  3,  4, 10,  8,
+      8,  2, 10,  6,  8, 11,  4,  2,  9,  8,  8,  9, 12,  5,  2,  2, 11,  8,  9,
+      5,  9,  6,  1,  5,  3, 12, 10,  3,  8,  5, 10, 12,  6,  8,  6,  1, 12,  3,
+      1,  5,  5,  9, 11,  1,  8,  1,  4, 10,  6,  5,  7,  8,  2,  1,  6,  1,  2,
+      1,  3, 11, 10,  9,  7, 11,  6,  1,  2,  8,  9,  5,  3,  7,  2,  4,  6,  8,
+     
+      9,  4,  4,  6,  7,  8,  3,  3,  8,  4, 11,  9, 12,  2,  2, 12,  8,  7,  5, 
+     12,  6,  1,  6,  4,  2, 10,  7, 10, 11, 11, 11,  2,  7, 12, 12,  6,  1,  6,
+     10, 10, 11, 11,  7,  4,  3,  2,  9,  2,  1,  3,  3, 10, 12,  7,  4,  7,  9,
+      8,  1,  8,  9,  4,  7,  3,  3,  7, 11,  5, 11,  7,  2,  6,  1,  1, 12,  1,
+      7,  1, 11,  9,  8,  7,  7,  6,  5,  7,  8,  5,  9,  4, 12,  3,  1, 10, 10,
+     
+      1,  7,  1,  2,  9,  6, 10,  4, 10,  4,  5, 10,  6,  1,  3,  6, 12,  6,  5,
+      7,  1, 10,  6,  9,  4,  2,  6,  6,  9,  2,  4,  6,  1,  5, 12,  2,  2, 11,
+      3,  2,  6,  2,  9,  9,  3,  3,  3, 10,  3, 11,  6,  2, 10,  8, 11,  2, 11,
+      4,  2,  2,  1,  6,  2,  4,  2,  5,  8,  5,  9,  2,  3,  6,  1,  3,  5,  5,
+      9,  8,  6, 11,  4,  2,  6,  5,  6,  9, 10,  1,  6,  3,  5,  7,  1,  7,  9,
+     
+     12,  7,  1,  3,  1, 11,  7, 12,  8,  3,  5,  1,  4, 12, 12,  1,  7,  1,  2,
+      2,  2, 11, 12,  2,  5, 10,  5,  4,  6,  2,  1,  1,  8,  5,  9,  8,  3,  7,
+     10, 11, 10,  9,  6, 11, 10,  4, 11, 10,  3,  7,  5,  1,  2,  6,  1,  6,  5,
+      5,  8,  1,  8,  9,  1,  4, 11,  1, 10,  1, 12,  5,  4,  8,  3,  4,  2,  5,
+     12,  2,  1,  5,  2,  4,  1,  8,  9,  4,  4, 11,  9, 11,  5,  4,  1,  3, 12,
+     
+      5,  4, 10,  6,  4, 11, 11,  1,  6,  2,  1,  1,  6,  9,  9,  2,  7,  9,  7,
+     12,  6, 10,  8,  2,  7,  4,  1, 10,  8,  8,  9,  5,  1,  2, 12,  7, 11,  1,
+      8, 12,  2, 11,  9,  7,  6,  6,  2, 10,  8,  6,  7,  7,  6,  6,  1,  6,  2,
+      8,  5,  9, 10,  5,  7,  8,  7,  2,  3, 12,  2,  1,  6,  6,  8,  1,  1,  3,
+      4,  2,  1, 11,  9,  5,  8, 11,  7,  4, 10, 12,  6,  2, 12,  1, 10,  6,  4,
+     
+      6,  1,  7,  3,  3,  9,  3,  6,  6,  5,  6, 10,  5, 12,  7, 12,  5,  4,  7,
+      8,  7,  4,  7,  7,  5,  2, 11,  6, 11,  4,  2,  2,  9,  7,  1,  7,  7, 11,
+      1,  1, 12,  5,  2,  4,  2,  3, 11,  2,  2, 12, 10, 12,  6,  9, 12,  7,  6,
+      5, 11,  7,  9,  3,  7, 12,  4,  2,  8,  3, 10,  4, 12,  3,  9,  4,  5,  2,
+     11,  5,  6,  8,  8,  8,  8,  4,  3,  1, 12,  6,  1,  3,  8,  7, 10,  7, 10,
+     
+     10,  6,  8, 10,  7,  5,  8,  4,  7,  8,  1,  4,  4,  6,  3,  2,  3,  1,  2,
+     10,  7,  8,  6, 10,  4,  4,  8, 10, 12,  5, 11, 10, 11,  9, 11,  2, 10,  3,
+      9,  3,  9, 12, 12,  7,  3, 12,  3,  6, 12, 11,  8,  1, 12, 10,  7,  6,  4,
+     12,  5, 10,  8,  8, 12,  1,  1,  5, 10,  9, 12,  7,  3,  6,  7, 12,  9, 11,
+      8,  7,  6, 12,  8,  1,  4,  5,  1,  5,  7,  2, 11,  8,  9, 11, 11,  5, 10,
+     
+      2,  8,  2,  3,  7,  5,  2,  1,  2,  5,  6,  8,  6,  7,  2, 12,  5,  8, 10,
+      3,  4,  4,  4,  2,  2,  4, 12,  2,  5,  5, 10,  2,  1,  8, 12, 10,  8,  3,
+      5,  2,  4,  2,  5, 10,  6, 11,  4,  6, 11, 11,  5, 10,  3
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(aub_d12_df, set_fill_map["aubergine"])
+```
+
+
+```{r aub-d20}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[8] & dice_setup$die == dice[7], "sample_size"] / 19
+
+aub_d20_df <- # want: 1851 rolls
+  data.frame(
+    set = sets[8],
+    die = dice[7],
+    result = c( # 19 per full row
+     11, 11,  4,  2, 15,  4, 12, 17, 15, 17, 10,  9,  3,  4, 15, 10, 10, 12,  2,
+      9, 19, 14, 13,  5,  6,  1, 18,  1,  6, 17, 17, 12,  1,  1, 16,  5,  5, 16,
+     13, 12, 11,  3, 13, 20,  7,  9,  1, 13,  3, 18, 10, 11, 20,  9,  5,  4,  9,
+     12,  6, 18,  6, 13, 17, 13, 19, 12, 12,  1, 12, 19,  6,  1,  6, 20,  3,  2,
+     17,  9, 17, 18,  9,  4,  5,  9,  7, 12,  2, 12,  1,  6, 20,  8, 11, 14, 10,
+     
+     12, 12, 15, 13, 20, 16, 16,  7, 19,  6,  1,  5, 17,  5, 10, 18, 10, 12,  9,
+      8,  1, 18,  4, 16,  2, 11, 11,  5,  5,  2, 11, 17, 19,  2, 20,  9,  1, 11,
+      9, 12, 14,  7,  5,  8,  4,  4, 19,  6, 12,  6,  2, 20, 16,  3,  3, 13,  8,
+     18,  7,  1, 20, 12,  1, 16,  7,  5, 16, 19, 15, 15, 20, 10, 19,  6,  4, 17,
+     15, 11,  1,  8,  3,  8,  8,  2,  6,  4,  2, 20, 11,  3, 20, 15, 12,  3,  8,
+     
+      8, 20,  8,  1, 11,  5, 11, 17,  2, 17, 19,  4,  6, 14,  6, 15,  1, 11, 11,
+      4, 10, 15, 10,  3, 11,  4, 10, 14, 15,  5,  4, 14,  5,  7,  9, 12, 12, 14,
+     11, 13,  5,  2, 11,  6,  4,  9, 18, 12, 11,  9, 19,  4,  9, 17,  2, 19,  7,
+      4,  6, 15, 14, 16, 15, 11, 18, 20, 18, 13, 18,  8, 20, 18,  4, 14, 11, 11,
+     12, 11, 13,  6, 15, 13,  9, 18,  3,  5,  6, 17, 13, 13, 17, 18,  2, 17, 13,
+     
+     18, 20,  2,  2, 18, 11, 16, 10,  6, 18, 17, 20,  7, 17, 15, 20,  3,  2,  5,
+      3,  7,  2,  1,  6,  2,  5, 18, 12,  1, 13,  9,  3,  9, 17, 18,  7,  7,  8,
+     19, 12, 13,  5, 13,  1,  5,  4, 13, 13, 18, 19, 16,  8, 11,  6,  3, 16, 15,
+     17, 13,  3, 10, 16, 10,  9, 18,  8,  7, 14, 20, 13, 15, 14, 10, 16,  8,  1,
+      2, 18,  5, 13,  1, 13, 10, 17,  1,  4, 15,  8,  2, 11,  4, 15,  5,  4, 17,
+     
+     12,  7,  7, 13,  9,  6, 19, 18,  2,  4,  6,  2,  9, 13,  6, 17,  7, 14, 10,
+     19,  6, 16,  5, 10,  9,  6, 10, 15, 12, 16,  9,  1,  1,  3, 11,  9,  4, 17,
+      9, 11, 20,  6,  2,  8, 14,  5, 13, 16,  6,  9, 19,  5,  9, 17,  5, 12, 15,
+      1,  2, 20,  4,  9, 11, 11, 17, 16, 17, 12, 10,  3,  5,  2,  6,  5,  3,  2,
+     16, 18,  8, 14, 11,  1, 15,  5,  1,  7,  7, 14,  2,  4, 10,  7,  5, 13, 11,
+     
+     12,  9, 18, 14, 16, 20,  1,  8, 17, 12,  1, 10, 16,  5, 14, 18,  8,  3, 19,
+     20,  1, 20, 15,  9,  8, 12,  5, 16,  8,  6,  2,  1,  8,  7, 15, 15,  1, 16,
+     20,  7, 12, 16,  1, 19, 20,  5, 15, 17, 20, 16,  1, 11,  5, 11,  9,  5, 17,
+      6,  6,  9,  9,  1,  4,  9,  1,  5,  1,  9,  2,  8,  2, 17, 19, 18,  8,  1,
+     17,  1, 10, 17, 15, 20, 13, 11, 15, 19,  9, 11, 10, 20, 18, 16, 20, 10,  1,
+     
+     17,  8, 14,  6, 11, 11, 12,  3, 15, 20, 10,  2, 19, 12,  3,  1, 14,  5,  3,
+     20,  6,  8,  7, 13, 12,  2,  6,  6, 15,  7,  7, 14, 17, 15, 11, 13,  9,  1,
+      9, 10,  6,  7, 10, 15, 11, 17,  5,  4, 10, 16,  7, 12,  6, 15,  4, 17,  8,
+      3, 20,  2, 15, 12,  5,  6, 13,  4,  2, 11,  5,  5, 19,  7, 10, 11, 18,  2,
+      7,  5, 11,  2,  4, 14,  2,  6, 16, 15,  1,  1, 18,  1,  3,  2,  6, 17, 13,
+     
+      1,  6, 13, 19, 19,  2, 10,  3,  2, 10, 18, 11, 20,  1,  6, 18, 15,  7,  8,
+     12,  1,  2,  9,  6,  5, 12, 18,  9,  3,  6,  6,  2, 20, 15, 19,  9, 10,  6,
+      5, 12, 20, 20, 16,  7,  9,  8,  4,  5, 11,  6,  4, 10,  3, 13,  9, 13,  1,
+     11,  4,  1, 17,  9, 14,  7,  3, 10, 19,  7, 10,  2, 13, 11,  1, 10,  8, 16,
+     18,  2,  8, 13,  4, 20,  7, 10, 19, 14,  3, 10, 15,  8, 10, 14,  9,  3, 13,
+     
+      4,  3,  2,  5, 13, 19,  9, 17,  4, 19,  6, 17, 14,  7, 15, 14,  9,  3,  5,
+     17, 13,  8, 19, 16, 15, 11,  5, 19, 10,  6, 14,  2, 18,  5, 15, 14, 14, 18,
+      3, 10,  2,  3, 10,  6, 15, 12, 17, 18,  2, 14, 13,  4, 16, 14,  4,  6,  5,
+     13, 12, 18,  6,  8,  4, 15, 12, 16,  9,  3, 16, 18,  5, 13, 13, 12, 19,  5,
+      3, 13, 17,  2, 15, 12, 15,  4, 18, 16, 11, 20,  3, 13,  2, 10,  8, 20, 15,
+     
+     12,  7, 16,  8, 18, 18,  9,  1,  9,  9, 12, 20, 15, 20, 13,  1,  6, 15,  9,
+      2,  6,  6, 12,  5, 20,  1, 20,  9, 14,  7, 13, 15, 17, 11, 19,  8,  1, 18,
+     11, 17,  9, 10,  9, 18,  5, 10, 13,  3, 12, 13, 10, 13,  8, 12, 12, 12, 18,
+      1,  9, 12, 18,  3,  6,  3, 11, 10, 18,  6,  3, 16,  8, 12, 11,  7, 17, 14,
+      2,  1,  3, 16, 18, 11,  6,  2, 20,  2, 17,  1, 13, 13, 15, 20, 13, 17, 17,
+     
+      3,  5, 16,  9, 19, 19,  6, 17, 17, 20, 15,  7,  7, 19,  1, 16,  5,  5,  5,
+     19,  2, 11, 20,  7,  8, 12,  4, 16, 16,  3,  9,  8,  5, 17, 15, 16,  6,  1,
+      8,  1,  4,  8, 15, 15, 19, 20,  7,  7, 11,  7, 10, 15, 16,  1,  4,  1, 19,
+      3,  6,  9,  8, 11,  5,  2,  6,  2, 11, 17, 12,  5,  1,  7,  2, 17, 13, 16,
+     15,  9,  9,  7, 20, 17,  5,  6,  2,  8, 17, 12,  4,  1,  3,  3, 12, 16, 17,
+     
+      4, 10, 17,  8, 20, 13, 18,  6, 13,  9,  4, 12,  1, 17, 13, 15, 12, 19,  6,
+      1, 18, 11,  1, 16, 17,  1,  7, 20,  8,  9, 20,  9, 13, 16,  7,  1, 15, 17,
+     15,  6,  7, 18,  5,  5, 14,  1, 11,  3,  3, 11,  9, 14, 11, 12, 10, 19,  6,
+      7,  7,  8,  8,  6, 10, 13,  6,  9, 16,  4,  8,  3, 12, 17, 14,  7,  1,  2,
+      7,  9,  9,  9,  5, 10, 19,  6, 20, 14,  3, 20, 10, 15,  6,  3,  9, 10, 17,
+     
+     14, 20, 20, 12,  2, 17,  2, 12,  9, 18,  4, 19,  8, 16,  3, 16, 15, 20,  5,
+     14,  2,  1, 18, 17,  5,  6, 14,  6, 14,  3, 13,  4, 19,  6, 11, 18, 13,  4,
+     11,  8, 12,  5, 13, 18, 19, 17,  8,  9,  1, 12, 18, 12,  4, 11,  3,  4,  4,
+      1,  8, 15, 15, 15, 18, 13, 17,  6, 17, 16, 18,  7, 14, 12,  5, 15, 10, 11,
+     18, 14, 11, 10,  3,  1,  8,  7, 17, 20,  9, 10, 14,  1, 14, 10, 12,  7, 20,
+     
+      7, 20,  1,  4,  8, 12, 14, 18, 16,  3,  3, 17, 18,  2, 12,  1,  9,  9, 11,
+      9, 10,  4, 18,  7, 13,  2, 20,  2, 17,  7, 20, 13,  7, 19, 15, 11,  3, 19,
+     15,  5,  5,  5, 16, 20, 20, 14,  8, 19, 20,  9,  2, 13,  1, 20, 13,  2,  1,
+     12,  2,  7, 15,  2,  9,  1,  2,  1, 17, 12,  9,  7, 10,  7,  9,  1, 19,  1,
+     20, 11,  7,  6, 11,  1, 12, 20,  6, 12,  8, 19, 11,  6, 12, 13, 16,  7, 18,
+     
+     17, 10, 14,  3, 16,  6, 20, 20, 14,  9, 15,  6, 18,  5, 10, 13, 20, 14, 11,
+      1, 12,  2, 14, 12, 19, 15,  2, 18, 17, 10, 17, 11,  1,  1, 11, 16, 16, 10,
+      9, 11,  4, 13,  7, 14,  3, 16, 16, 18,  2, 19, 19, 17, 19, 20,  7, 17, 12,
+     20, 19, 18, 10, 16, 19, 11, 13,  2,  4,  3,  3,  9, 13,  9,  7,  5,  4,  7,
+      7,  2,  1,  7, 11,  5,  6,  8, 15,  9, 10,  5, 13, 19,  5,  5,  6,  9, 17,
+     
+     20,  1, 16,  6, 13, 19,  7,  6, 19,  8, 15,  7, 20, 14,  8, 13, 19,  8, 10,
+      2, 12,  3, 10, 16,  7, 19,  6, 12,  6, 19,  8,  9, 17, 11,  7,  8,  8, 16,
+      8, 12,  9,  9,  6, 19, 16, 13,  1, 10, 12, 16,  2, 10,  6,  8,  5,  8, 16,
+     18,  9,  4,  4, 12, 16, 16, 11,  3, 16, 14,  8,  7, 15, 11, 13, 18,  8,  9,
+     19,  9, 18,  2,  5, 12, 11, 19,  7, 20,  1, 15,  9, 13,  5, 14, 16, 20,  5,
+     
+     14,  2, 12, 20, 18, 14, 13, 17, 11, 20,  9, 13, 19,  4,  5,  2, 15, 19, 10,
+     12, 19, 13,  3,  2, 14,  9,  8, 12, 20,  5, 11,  2,  1, 10, 16,  4,  9,  7,
+      8,  4, 10, 15, 11, 16, 13, 18,  6,  6, 14, 12, 12,  3, 12, 19,  4, 19,  6,
+      3, 15, 11,  3, 10, 16, 17,  8,  1, 11,  4, 12, 19,  6,  7, 14,  9, 19, 11,
+     15, 12,  8, 17, 12, 10,  5,  2, 16,  9, 20, 11, 20, 12, 16, 18, 10, 16,  8,
+     
+      8,  4, 16,  1,  2, 11,  7,  9, 13, 18, 13, 16,  7,  2,  1,  1, 10, 16, 19,
+     12, 13, 17, 19,  1,  1, 16, 11,  6, 20, 15,  6,  1, 14, 20,  8, 12,  8, 10,
+     14,  4,  9, 14, 10,  5,  1,  8, 18, 11,  9, 11, 10,  5, 11,  7,  2, 17,  4,
+     20, 17, 10, 19, 11, 13,  7, 10, 16,  7, 12,  2, 11, 19, 18, 17,  9,  9,  9,
+     15, 15,  2,  4, 12, 18, 12,  2, 11, 11,  6, 14, 12, 12, 13,  8, 12, 13,  7,
+     
+     14, 12, 13,  3,  1, 12, 18, 12,  9, 10, 14, 17, 18,  8, 19,  5,  9,  8, 17,
+     19,  4,  4,  2, 10,  4, 12, 18,  5,  6,  8, 17, 12, 11,  4,  4, 19,  3, 15,
+      5, 13,  8, 18, 12, 18, 10, 11, 13, 19,  1, 13,  3,  6, 14,  8,  3,  9, 20,
+     10,  6,  2,  5,  7, 20, 18, 12,  9,  6, 18, 17, 10, 20, 17, 15,  2,  5, 20,
+     10, 19,  2, 14, 11, 20, 18,  6, 14,  6,  9, 13,  9, 19,  2,  8, 17,  9,  9,
+     
+     14, 10,  3, 13,  9,  7,  1, 13, 20, 10, 10, 13, 19, 18,  2, 11, 14, 19, 13,
+     14, 14, 14,  4, 10,  5, 16, 11, 10, 14,  6, 11, 14, 13,  1,  9,  2, 13, 13,
+      3, 14, 12,  6,  5, 10, 13,  2
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(aub_d20_df, set_fill_map["aubergine"])
+```
+
+
+### Ocean Dice
+
+```{r ocn-d4}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[9] & dice_setup$die == dice[1], "sample_size"] / 25
+
+ocn_d4_df <- # want: 197 rolls
+  data.frame(
+    set = sets[9],
+    die = dice[1],
+    result = c( # 25 per full row
+      3, 4, 3, 2, 1, 1, 2, 3, 4, 2, 3, 3, 2, 2, 1, 4, 3, 1, 4, 4, 4, 4, 4, 3, 2,
+      1, 3, 4, 1, 4, 4, 3, 1, 1, 1, 2, 2, 2, 3, 2, 1, 1, 4, 4, 1, 4, 3, 4, 4, 2,
+      3, 3, 3, 4, 3, 4, 1, 3, 3, 4, 1, 3, 3, 4, 2, 1, 2, 2, 3, 4, 1, 2, 1, 4, 3,
+      2, 3, 4, 3, 4, 2, 4, 3, 3, 3, 2, 3, 3, 2, 1, 4, 1, 1, 4, 1, 3, 1, 1, 1, 1,
+      1, 4, 2, 2, 2, 4, 2, 4, 1, 2, 4, 1, 1, 1, 3, 4, 2, 1, 1, 3, 1, 4, 2, 2, 1,
+      
+      4, 3, 2, 3, 2, 4, 3, 1, 3, 1, 3, 3, 3, 2, 1, 4, 2, 2, 2, 4, 1, 4, 3, 3, 3,
+      3, 4, 2, 3, 2, 4, 2, 2, 1, 1, 1, 1, 1, 1, 3, 3, 4, 1, 3, 1, 4, 3, 3, 3, 1,
+      4, 2, 3, 1, 2, 4, 4, 2, 1, 1, 4, 1, 1, 4, 2, 3, 1, 3, 2, 1, 4, 4
+    ) 
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(ocn_d4_df, set_fill_map["ocean"])
+```
+
+
+```{r ocn-d6}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[9] & dice_setup$die == dice[2], "sample_size"] / 25
+
+ocn_d6_df <- # want: 347 rolls
+  data.frame(
+    set = sets[9],
+    die = dice[2],
+    result = c( # 25 per full row
+      5, 5, 5, 5, 6, 4, 5, 2, 3, 5, 2, 2, 1, 1, 1, 3, 2, 4, 4, 3, 2, 6, 2, 4, 4,
+      4, 5, 2, 6, 5, 4, 2, 3, 4, 3, 5, 3, 5, 3, 6, 4, 6, 4, 3, 2, 4, 1, 3, 1, 1,
+      3, 3, 6, 4, 3, 6, 2, 6, 4, 5, 1, 5, 3, 5, 2, 1, 3, 3, 3, 4, 2, 2, 3, 1, 2,
+      1, 2, 5, 4, 6, 6, 2, 3, 3, 4, 2, 2, 3, 4, 4, 2, 6, 3, 4, 4, 1, 5, 6, 3, 3,
+      1, 5, 4, 5, 3, 2, 6, 5, 4, 2, 1, 6, 1, 2, 2, 5, 3, 4, 2, 3, 2, 2, 1, 6, 3,
+      
+      2, 2, 4, 6, 4, 3, 2, 3, 3, 1, 6, 2, 4, 2, 1, 6, 6, 6, 2, 3, 1, 3, 3, 2, 3,
+      6, 4, 3, 5, 6, 3, 3, 2, 5, 6, 5, 2, 4, 3, 4, 2, 1, 6, 4, 1, 6, 1, 3, 3, 4,
+      1, 2, 2, 3, 1, 3, 6, 4, 2, 6, 3, 1, 4, 1, 3, 6, 4, 5, 3, 3, 5, 3, 6, 3, 5,
+      4, 1, 6, 1, 1, 4, 2, 2, 3, 4, 6, 2, 5, 2, 1, 3, 6, 3, 5, 5, 4, 2, 2, 1, 1, 
+      3, 1, 6, 1, 3, 4, 4, 4, 3, 6, 5, 3, 3, 3, 5, 3, 5, 1, 5, 5, 4, 5, 1, 4, 2,
+      
+      3, 3, 5, 3, 6, 6, 6, 1, 2, 6, 1, 6, 4, 6, 2, 5, 1, 4, 5, 2, 2, 3, 6, 1, 6,
+      1, 4, 4, 6, 2, 2, 5, 4, 5, 2, 3, 5, 1, 1, 6, 6, 4, 6, 2, 5, 3, 4, 3, 4, 6,
+      2, 2, 2, 5, 6, 3, 2, 2, 3, 4, 3, 6, 4, 2, 5, 3, 4, 1, 5, 3, 4, 3, 5, 6, 3,
+      3, 1, 6, 2, 6, 4, 4, 4, 5, 6, 3, 3, 3, 1, 3, 6, 2, 2, 1, 5, 3, 3
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(ocn_d6_df, set_fill_map["ocean"])
+```
+
+
+```{r ocn-d8}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[9] & dice_setup$die == dice[3], "sample_size"] / 25
+
+ocn_d8_df <- # want: 517 rolls
+  data.frame(
+    set = sets[9],
+    die = dice[3],
+    result = c( # 25 per full row
+      8, 2, 8, 2, 5, 8, 4, 8, 3, 1, 8, 7, 4, 7, 7, 1, 7, 6, 5, 5, 4, 1, 3, 5, 5,
+      1, 6, 5, 4, 1, 1, 1, 4, 4, 8, 6, 7, 3, 8, 1, 6, 2, 4, 7, 1, 7, 1, 4, 8, 7,
+      3, 7, 4, 4, 4, 5, 4, 1, 7, 4, 1, 4, 4, 5, 1, 7, 7, 6, 6, 6, 3, 2, 3, 2, 1, 
+      4, 2, 7, 6, 6, 6, 7, 2, 2, 2, 1, 5, 6, 8, 2, 3, 1, 4, 5, 6, 6, 7, 8, 1, 5, 
+      8, 4, 6, 8, 4, 7, 7, 4, 7, 2, 6, 7, 4, 2, 8, 1, 4, 7, 8, 4, 5, 8, 4, 5, 3, 
+      
+      6, 3, 2, 4, 4, 5, 8, 5, 7, 1, 7, 5, 1, 1, 1, 2, 7, 2, 2, 6, 4, 8, 3, 6, 4, 
+      7, 5, 1, 8, 6, 1, 6, 6, 2, 6, 1, 2, 8, 5, 7, 6, 2, 1, 7, 1, 5, 4, 5, 7, 6, 
+      1, 7, 7, 4, 4, 8, 1, 2, 3, 1, 8, 5, 2, 6, 4, 8, 2, 1, 7, 2, 3, 2, 3, 6, 5, 
+      6, 6, 4, 5, 8, 1, 3, 6, 2, 1, 8, 7, 7, 8, 5, 7, 8, 1, 4, 3, 3, 2, 4, 1, 8, 
+      3, 1, 5, 4, 2, 3, 7, 7, 2, 1, 7, 4, 3, 1, 4, 1, 5, 5, 5, 6, 5, 6, 3, 2, 3, 
+      
+      2, 2, 5, 1, 8, 3, 2, 5, 1, 5, 1, 6, 6, 8, 6, 2, 1, 2, 2, 2, 1, 8, 4, 6, 4, 
+      4, 4, 1, 4, 4, 4, 8, 6, 1, 1, 1, 7, 3, 8, 7, 5, 3, 5, 8, 8, 1, 4, 4, 7, 2, 
+      3, 4, 5, 4, 4, 1, 3, 6, 6, 8, 1, 5, 3, 3, 5, 2, 2, 8, 8, 3, 6, 3, 5, 4, 5, 
+      7, 5, 8, 5, 6, 2, 3, 1, 5, 7, 6, 5, 2, 7, 6, 5, 4, 8, 5, 2, 1, 7, 6, 6, 5, 
+      2, 1, 2, 7, 1, 3, 7, 5, 3, 4, 3, 8, 3, 4, 3, 6, 4, 4, 2, 5, 1, 5, 7, 2, 2, 
+      
+      1, 1, 5, 5, 4, 3, 5, 2, 8, 8, 3, 7, 2, 4, 2, 3, 1, 6, 6, 5, 2, 5, 2, 1, 3, 
+      6, 4, 5, 5, 2, 2, 6, 4, 3, 1, 6, 2, 6, 4, 2, 8, 2, 5, 4, 2, 7, 2, 3, 3, 2, 
+      4, 1, 6, 2, 4, 2, 4, 1, 8, 4, 5, 2, 5, 5, 6, 3, 3, 1, 3, 7, 7, 6, 6, 6, 2, 
+      6, 8, 4, 2, 3, 6, 7, 3, 1, 6, 5, 4, 2, 2, 7, 8, 3, 6, 1, 1, 3, 5, 5, 5, 5, 
+      8, 3, 7, 4, 3, 6, 1, 3, 1, 5, 7, 6, 6, 5, 7, 5, 4, 7, 4, 1, 1, 6, 8, 5, 7, 
+      
+      1, 4, 6, 7, 8, 5, 3, 8, 4, 5, 5, 5, 3, 3, 6, 3, 3
+      )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(ocn_d8_df, set_fill_map["ocean"])
+```
+
+
+```{r ocn-d10}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[9] & dice_setup$die == dice[4], "sample_size"] / 25
+
+ocn_d10_df <- # want: 705 rolls
+  data.frame(
+    set = sets[9],
+    die = dice[4],
+    result = c( # 25 per full row
+      4, 2, 1, 9, 1, 6, 2, 1, 3, 4, 4, 6, 8, 8, 5, 6, 1, 8, 8, 0, 9, 2, 9, 6, 2, 
+      6, 3, 8, 9, 2, 7, 2, 3, 4, 3, 9, 5, 6, 5, 8, 6, 6, 9, 0, 8, 6, 7, 7, 3, 9, 
+      2, 1, 4, 7, 9, 8, 3, 9, 6, 8, 2, 0, 7, 9, 0, 3, 4, 3, 2, 5, 6, 5, 6, 4, 6, 
+      6, 6, 6, 3, 9, 9, 9, 8, 3, 4, 6, 6, 3, 5, 7, 9, 6, 4, 2, 9, 7, 2, 9, 7, 3, 
+      9, 2, 1, 1, 0, 3, 3, 1, 1, 7, 7, 4, 0, 3, 0, 0, 9, 9, 8, 7, 6, 4, 1, 3, 1, 
+      
+      2, 5, 9, 5, 9, 3, 4, 1, 0, 3, 8, 6, 9, 3, 3, 8, 5, 6, 9, 7, 3, 7, 0, 6, 0, 
+      2, 8, 8, 6, 1, 4, 2, 6, 2, 3, 9, 8, 4, 8, 1, 1, 3, 2, 5, 0, 6, 0, 1, 4, 2, 
+      5, 3, 2, 7, 0, 6, 0, 8, 6, 0, 6, 1, 8, 6, 1, 7, 4, 0, 6, 5, 4, 7, 7, 7, 6, 
+      5, 3, 7, 8, 9, 4, 7, 8, 3, 0, 8, 5, 4, 0, 4, 7, 5, 6, 9, 3, 7, 3, 2, 5, 7, 
+      5, 2, 1, 4, 4, 2, 0, 5, 6, 0, 1, 6, 0, 2, 6, 6, 1, 4, 6, 8, 1, 5, 4, 0, 6,
+      
+      8, 1, 3, 9, 7, 9, 6, 2, 0, 0, 4, 9, 1, 1, 4, 7, 6, 6, 0, 8, 3, 6, 8, 0, 5, 
+      3, 9, 1, 3, 7, 6, 9, 5, 3, 6, 6, 4, 7, 9, 4, 2, 8, 4, 0, 2, 8, 7, 3, 6, 8, 
+      8, 0, 0, 7, 9, 8, 1, 4, 3, 8, 7, 3, 7, 6, 5, 3, 0, 0, 3, 0, 3, 5, 0, 4, 1, 
+      6, 5, 2, 7, 6, 4, 2, 8, 0, 5, 4, 1, 0, 9, 3, 4, 9, 9, 9, 7, 5, 8, 2, 7, 6, 
+      7, 9, 7, 0, 8, 2, 3, 3, 9, 1, 1, 8, 0, 4, 9, 3, 5, 0, 7, 1, 7, 2, 3, 3, 5, 
+      
+      5, 7, 1, 6, 6, 9, 0, 8, 4, 8, 6, 6, 4, 1, 2, 4, 6, 5, 5, 6, 4, 1, 5, 2, 2, 
+      6, 0, 1, 5, 3, 8, 1, 1, 8, 4, 2, 0, 6, 8, 7, 7, 3, 6, 9, 8, 6, 5, 4, 1, 0, 
+      9, 3, 6, 9, 4, 8, 3, 5, 2, 6, 3, 2, 0, 0, 3, 6, 3, 2, 9, 6, 7, 1, 0, 5, 5, 
+      0, 5, 9, 7, 4, 8, 4, 0, 5, 2, 2, 0, 0, 4, 8, 2, 1, 5, 9, 0, 6, 1, 7, 8, 3, 
+      3, 7, 5, 3, 6, 0, 0, 7, 6, 6, 1, 1, 6, 7, 6, 1, 6, 4, 3, 2, 5, 8, 8, 0, 8, 
+      
+      9, 3, 2, 0, 1, 5, 4, 3, 0, 5, 3, 0, 4, 4, 9, 2, 3, 9, 6, 0, 6, 5, 6, 3, 9, 
+      0, 6, 4, 6, 8, 7, 0, 8, 0, 0, 4, 2, 9, 5, 5, 0, 0, 6, 0, 5, 8, 3, 2, 7, 7, 
+      9, 0, 7, 2, 4, 5, 8, 4, 2, 8, 5, 2, 9, 2, 4, 3, 1, 3, 3, 8, 4, 9, 0, 5, 4, 
+      2, 4, 1, 2, 9, 4, 2, 0, 6, 0, 9, 0, 7, 8, 9, 6, 1, 1, 4, 8, 1, 4, 4, 2, 1, 
+      1, 8, 3, 8, 1, 6, 0, 0, 9, 1, 9, 6, 5, 1, 7, 8, 7, 6, 8, 4, 9, 9, 7, 0, 5,
+      
+      0, 7, 7, 6, 9, 7, 0, 3, 7, 1, 2, 7, 0, 5, 3, 5, 6, 8, 7, 4, 1, 6, 8, 9, 1, 
+      3, 1, 7, 4, 3, 1, 2, 0, 1, 8, 5, 6, 2, 2, 3, 6, 1, 6, 6, 0, 5, 3, 9, 2, 6, 
+      7, 8, 6, 4, 6, 1, 3, 7, 5, 6, 7, 5, 1, 1, 0, 4, 0, 6, 6, 0, 9, 7, 8, 3, 4,
+      0, 4, 0, 0, 1
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+ocn_d10_df$result[ocn_d10_df$result == 0] <- 10
+
+plot_result(ocn_d10_df, set_fill_map["ocean"])
+```
+
+
+```{r ocn-dpct}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[9] & dice_setup$die == dice[5], "sample_size"] / 25
+
+`ocn_d%_df` <- # want: 705 rolls
+  data.frame(
+    set = sets[9],
+    die = dice[5],
+    result = c( # 25 per full row
+      6, 1, 8, 4, 6, 3, 1, 0, 7, 2, 2, 6, 4, 9, 9, 7, 3, 5, 0, 4, 1, 2, 6, 6, 7, 
+      6, 7, 2, 1, 9, 5, 9, 9, 3, 1, 9, 0, 9, 5, 7, 9, 8, 3, 7, 6, 2, 0, 5, 5, 1, 
+      9, 4, 8, 4, 2, 4, 8, 6, 6, 9, 3, 7, 0, 2, 8, 2, 8, 1, 2, 4, 8, 9, 3, 0, 1, 
+      0, 6, 5, 0, 7, 3, 7, 9, 4, 3, 1, 3, 9, 9, 4, 2, 2, 0, 5, 7, 7, 2, 2, 0, 5, 
+      0, 6, 4, 5, 6, 8, 5, 1, 0, 6, 3, 2, 0, 3, 5, 8, 6, 1, 9, 7, 8, 2, 1, 3, 6, 
+      
+      7, 8, 4, 7, 8, 2, 0, 8, 2, 2, 0, 7, 4, 8, 2, 5, 1, 5, 0, 6, 3, 1, 6, 3, 7, 
+      8, 9, 8, 0, 2, 3, 5, 6, 6, 1, 5, 2, 0, 1, 1, 3, 8, 5, 1, 7, 9, 7, 8, 1, 3, 
+      0, 4, 0, 1, 6, 5, 2, 9, 9, 3, 8, 9, 3, 4, 0, 9, 7, 5, 1, 1, 2, 6, 0, 1, 2, 
+      4, 9, 5, 0, 3, 3, 5, 5, 0, 5, 3, 5, 8, 5, 2, 1, 3, 8, 2, 9, 8, 8, 4, 3, 7, 
+      8, 6, 3, 6, 4, 3, 3, 3, 9, 8, 1, 0, 4, 8, 8, 1, 2, 5, 8, 6, 7, 1, 4, 4, 4, 
+      
+      2, 6, 5, 6, 1, 2, 8, 5, 9, 4, 4, 7, 0, 7, 0, 2, 2, 3, 7, 3, 9, 8, 6, 0, 3, 
+      2, 3, 2, 4, 8, 1, 3, 2, 3, 2, 9, 5, 4, 2, 8, 9, 3, 9, 7, 2, 0, 2, 9, 2, 4, 
+      0, 3, 7, 9, 9, 6, 8, 1, 0, 8, 2, 4, 0, 2, 9, 4, 2, 2, 6, 8, 7, 5, 2, 0, 3, 
+      3, 8, 3, 0, 6, 8, 4, 7, 6, 2, 5, 3, 1, 0, 4, 2, 4, 7, 2, 5, 8, 1, 7, 1, 6, 
+      2, 2, 1, 0, 9, 1, 9, 9, 7, 2, 7, 1, 4, 4, 3, 2, 2, 2, 0, 6, 0, 6, 2, 9, 3, 
+      
+      4, 6, 6, 8, 5, 5, 7, 2, 2, 4, 4, 7, 2, 0, 3, 7, 5, 9, 8, 2, 4, 0, 3, 9, 3, 
+      3, 8, 3, 7, 5, 2, 9, 5, 1, 1, 5, 8, 2, 4, 7, 0, 4, 0, 5, 6, 6, 9, 3, 7, 9, 
+      3, 4, 6, 5, 6, 8, 7, 7, 4, 8, 5, 9, 1, 9, 6, 8, 0, 7, 2, 4, 5, 6, 1, 0, 4, 
+      8, 4, 6, 3, 7, 5, 9, 4, 8, 9, 6, 3, 8, 2, 2, 0, 6, 3, 8, 0, 5, 9, 2, 3, 4, 
+      1, 7, 5, 8, 9, 2, 8, 6, 9, 6, 8, 2, 0, 7, 2, 1, 2, 6, 1, 9, 9, 2, 0, 4, 8, 
+      
+      0, 2, 0, 8, 2, 0, 0, 4, 5, 2, 9, 0, 0, 7, 7, 9, 9, 7, 6, 8, 2, 2, 9, 5, 7, 
+      3, 5, 5, 9, 7, 8, 4, 3, 4, 7, 1, 1, 2, 5, 8, 9, 3, 0, 4, 9, 0, 1, 2, 8, 5, 
+      1, 5, 5, 5, 4, 7, 5, 4, 3, 7, 6, 0, 1, 3, 5, 1, 5, 5, 4, 1, 8, 3, 6, 9, 0, 
+      6, 7, 4, 7, 6, 2, 9, 3, 7, 7, 2, 3, 9, 7, 4, 5, 0, 5, 0, 2, 7, 6, 9, 2, 4, 
+      4, 5, 8, 5, 2, 7, 2, 0, 7, 1, 4, 8, 6, 6, 9, 9, 8, 5, 9, 2, 9, 2, 1, 2, 0, 
+      
+      6, 8, 4, 3, 3, 8, 2, 9, 5, 1, 4, 9, 1, 4, 9, 7, 3, 4, 5, 0, 2, 9, 5, 5, 3, 
+      9, 4, 7, 2, 7, 2, 1, 7, 5, 9, 6, 1, 4, 2, 1, 2, 5, 7, 6, 1, 8, 4, 7, 9, 0, 
+      6, 0, 4, 7, 3, 5, 7, 2, 6, 4, 8, 0, 9, 2, 6, 2, 9, 2, 0, 2, 2, 8, 7, 7, 0,
+      2, 9, 1, 3, 3
+      
+    )
+  ) %>% 
+  mutate(result = result * 10,
+         obs = 1:nrow(.))
+
+plot_result(`ocn_d%_df`, set_fill_map["ocean"])
+```
+
+
+```{r ocn-d12}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[9] & dice_setup$die == dice[6], "sample_size"] / 19
+
+ocn_d12_df <- # want: 908 rolls
+  data.frame(
+    set = sets[9],
+    die = dice[6],
+    result = c( # 19 per full row
+      7,  4,  9,  7,  5,  7,  2,  6,  6,  7,  4,  9, 10,  8, 12, 12,  7,  9,  2,
+      7,  9,  7,  4,  6,  6,  7, 10,  8,  6,  6,  9,  5, 10, 10,  1,  6, 11,  3,
+      2,  6, 10,  7, 10,  3,  9,  1,  6,  9,  8,  9, 12,  9,  5,  7, 11, 11,  6,
+      7,  2,  1,  4,  5,  4,  9,  5,  5,  1,  1,  9,  2,  1,  6, 11,  4,  8,  5,
+      6,  2,  8,  5,  8, 10,  4, 10,  3,  2,  3, 10,  2,  9,  3,  8,  1, 11, 11,
+      
+      3,  7,  3,  7,  3, 12,  7,  3,  9,  1,  3,  6,  7,  6, 11, 12,  4,  6,  5,
+      4,  3,  5,  1,  8,  1,  8,  4,  2,  4,  6,  8,  3,  2,  3,  9,  6,  5,  5,
+     11,  5,  5,  2,  8,  4,  5,  6,  5,  2,  9,  1,  1,  9, 11,  8,  9,  4,  9,
+      9, 11,  9,  1,  5,  3,  8, 10, 12,  6,  3,  2,  6,  9,  9, 12,  1, 11,  8,
+      2,  8,  9,  2,  2,  6,  8,  2, 12, 10,  5,  9,  4,  2,  7, 12,  9,  6,  8,
+     
+      2,  7, 11,  6,  4,  4, 12,  9,  5,  4,  9,  3,  7,  3,  1,  4,  5,  7,  1,
+      5,  6,  8,  9,  2,  1,  8,  6, 11,  6, 11, 12,  2,  9, 12, 11,  4, 10,  4,
+     11, 10,  2,  8,  5, 12,  9,  5,  1,  8,  8,  5,  5,  9,  4,  9, 12,  8,  3,
+     11,  9,  5, 10,  8,  1,  2,  6,  1,  2,  1, 11,  7,  3,  2,  1,  8,  1,  1,
+      6,  9,  6,  7,  8,  9, 10,  3, 10,  9,  3,  1,  4,  7,  5,  2, 11,  5,  6,
+     
+      7, 12, 12, 11,  2,  5,  9,  9,  2, 11,  1,  2,  9,  6,  1,  5, 10, 11,  7,
+     12, 10,  7, 11,  1,  1,  5,  4,  7,  6,  8,  7,  4,  8,  4, 10,  5,  1,  5,
+     11,  2, 12, 11,  3, 10,  8, 12,  6,  9,  2,  4,  6,  5,  9,  5,  3,  3, 10,
+      1,  7,  6,  4, 12,  3,  1, 10,  4,  7,  5,  1,  5, 12, 12,  9,  9,  4,  8,
+      9,  2,  7, 12,  6,  4,  1, 11,  8,  5,  7,  9,  6,  5,  6,  9,  4,  9,  4, 
+     
+      9,  2,  3,  4, 10, 12,  5, 11,  3, 11, 12,  8,  6,  6,  6,  5,  8,  7,  4,
+      3,  5,  2,  1,  9,  6, 10,  4,  1, 11,  1,  5,  8,  6,  4, 10,  5,  8,  2,
+      2, 12,  7,  7, 11,  6,  3,  3,  8,  4,  4,  6, 11,  1,  2, 11,  5,  9,  3,
+      8,  6, 12, 12,  7,  9,  4,  8,  6,  9,  2,  3,  5,  2,  3,  2,  5,  2,  4,
+     12,  4,  2, 10,  4,  4, 11,  7,  6,  6,  9, 10,  1,  1,  8,  5,  1,  4,  5,
+     
+      8, 11, 12, 10,  6, 10,  3,  7,  5, 10,  7,  6, 11, 10,  1,  6,  3, 11, 11,
+      9,  5,  8,  3,  2, 11, 10,  6,  8,  6, 11,  2,  2,  9, 10,  5, 10,  1,  8, 
+      1,  8, 11, 12, 12, 12,  9,  5, 11,  3, 10,  7, 12,  4,  8,  2,  8,  8,  6,
+      7,  1,  9,  2, 12,  7,  2,  5,  9,  3,  5,  5,  7, 10,  4,  5, 12,  8,  8,
+      2,  5, 11, 12,  7,  5, 11, 10,  6,  1,  3,  9,  8,  1, 10,  3,  4,  6,  6,
+     
+      8, 11,  7,  3,  6, 11, 12,  2,  5, 10, 12,  7,  7, 12,  7,  2, 12, 10,  8,
+      7, 12,  3, 10,  9,  7, 10,  7,  4,  7,  2,  6,  7,  5, 12,  6,  8, 11,  2,
+      9,  7,  4, 11, 10,  5,  3,  7,  6,  8,  5,  9,  8,  6,  5,  1,  9,  4, 10,
+      6,  2,  5,  3,  4,  3,  3,  1,  4,  1,  2, 12,  3, 12,  6, 12,  3,  7,  6,
+      2, 11, 10,  5,  2, 11,  5,  5, 11,  1,  3,  1,  7,  2,  2,  8,  3,  6,  5,
+     
+      2, 10,  5,  5, 11,  2,  5,  8,  7, 10,  7,  2,  5,  2,  9,  5,  1,  5,  5,
+      8, 11, 11,  6,  4,  2,  8,  4,  8,  8,  7,  9, 11,  8, 12,  3,  7,  2,  8,
+      2,  5,  4,  7,  1,  1,  5, 12,  1,  1,  4,  4, 10, 12,  4,  9,  9,  2,  7,
+      1, 11,  4,  5, 10, 11,  2,  1, 10,  5,  5,  7,  4,  9,  3,  7, 12,  7, 12,
+      8,  5, 11,  9, 11, 11,  9,  5, 10,  7,  2,  7,  5,  3, 10,  3,  5,  1, 10,
+     
+      5,  5,  3,  8,  6,  9,  2, 12,  5,  4,  7,  2,  6,  8,  1,  1,  8,  2,  2,
+      6,  4,  7,  9,  8,  2,  9,  4,  2,  4,  6,  4,  4,  3,  4,  8,  7,  8,  6,
+      1, 11, 12,  5,  8,  4,  7,  2,  4,  6,  9,  1,  4,  1,  4,  6,  7,  2,  8,
+     11,  5,  4, 12,  4,  5,  7,  2,  5, 10,  5,  4,  7,  4,  3,  7,  8,  8,  3,
+      5,  7, 12,  2, 12, 12,  8,  5,  3,  6, 11,  6, 11,  7, 10, 10,  5, 12,  4,
+     
+      5, 10,  4,  5, 10,  6,  1,  5,  9,  7,  7,  2,  3, 11,  6,  2,  4,  7,  2,
+      9,  6,  3,  6,  9, 11,  1,  5,  6,  1,  7,  1,  9,  5,  6,  9,  8,  7,  2,
+      4, 11,  9,  6, 10,  1,  3,  2, 10,  7,  8,  5
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(ocn_d12_df, set_fill_map["ocean"])
+```
+
+
+```{r ocn-d20}
+#|echo: FALSE
+#|eval: TRUE
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[9] & dice_setup$die == dice[7], "sample_size"] / 19
+
+ocn_d20_df <- # want: 1851 rolls
+  data.frame(
+    set = sets[9],
+    die = dice[7],
+    result = c( # 19 per full row
+     16, 17,  3, 14,  6, 13,  5, 17,  4, 10, 16, 17, 11,  2, 19, 16,  5,  1, 12,
+      7, 17, 14, 10,  6, 15, 18, 17,  4,  1,  7, 18,  4,  4,  4,  4, 19,  9, 19,
+     19,  7,  7,  6, 16,  2, 18, 12, 11, 15,  6, 10,  9, 10,  9, 18,  6, 12, 19,
+     12, 11,  9, 12, 16, 12,  5,  8,  4, 20,  4,  3,  1, 14, 18, 16, 13,  4,  3, 
+      3, 10, 13, 20,  6, 17, 17, 11,  6, 16, 14, 17,  7, 17, 18,  1,  4, 11,  8,
+     
+      6, 12, 14, 11,  8, 17, 13, 20,  4,  1,  4, 15,  4,  4,  1, 12,  9, 10, 18,
+     11,  8,  5,  2, 18, 16,  9, 12,  8,  3,  9,  1, 18,  3,  2, 13,  3,  3,  7,
+      6, 13,  3, 10, 16, 14, 17,  4, 17,  4,  5, 15,  4, 16, 13,  4,  4, 17, 18,
+     19, 17,  9, 17, 11, 16, 18, 14, 11,  6, 11,  3, 14,  9,  1,  4, 14,  8,  8,
+      8, 18, 14, 12, 15,  8,  3, 18,  3,  9, 15, 19, 14, 12,  9,  8, 19, 17, 16,
+     
+      1, 12, 15,  5, 16, 15, 14,  5, 15, 15, 13, 16, 14, 11,  4,  9, 12,  9,  1,
+      2, 17, 13, 17,  4,  1, 16,  6, 18, 11, 13,  3, 20, 18, 14, 12,  8, 14,  4,
+     16, 14,  5,  2,  2, 17,  9, 10, 17,  7, 16, 19,  3, 18, 13, 10,  2, 12, 18,
+      7, 18, 10,  4, 15,  4,  8,  2, 19,  2,  4,  4,  1, 13, 12,  6,  3, 16,  2,
+     12,  8, 19, 16, 10, 17,  9,  4, 12,  7, 20, 20,  4, 14, 15, 14, 12,  9,  4,
+     
+     18, 10, 20, 14,  3,  1, 16,  3,  7,  3,  9,  1, 18,  3, 14,  3,  7, 10,  6,
+      4, 10, 10,  3, 19, 12, 11, 17,  4,  6,  3, 10, 14, 17,  8,  4, 13,  6,  7, 
+     12, 20, 12, 13, 19,  8, 18,  9,  9, 10, 17,  2, 12,  1,  9, 14, 18, 16, 18,
+      7,  3,  6,  1, 18,  1, 17,  3,  8, 14, 13,  6,  1, 17, 18,  9,  4,  9, 12,
+      6,  4, 16,  5,  6, 12,  3,  4,  1, 19, 17,  5, 11,  8, 17,  5, 17,  4, 19,
+     
+     11,  2, 12, 14,  1, 18, 11, 14,  1,  1, 20,  5,  9, 20,  7, 14, 18, 18,  3,
+     11, 12,  6, 12,  2, 17, 13, 16, 12, 12, 11,  3,  6, 10, 17,  9, 14, 12, 17,
+     18,  4,  9,  6,  2,  8, 18, 11,  5, 16,  4,  4, 10,  3,  1, 11, 18, 13, 13,
+     10, 11,  7,  6,  1,  9, 20,  7, 13, 20,  7,  8, 17,  1, 14, 13,  7,  4, 10,
+      8, 11, 10, 17, 14, 11,  3, 11,  9, 12, 12,  1,  9,  7,  5,  7,  6, 19, 20,
+    
+      4, 12, 14, 11, 14, 18,  5,  2, 14,  3, 10, 20,  1,  9, 12, 18,  9,  2,  9,
+      7, 17, 17,  6, 15, 13,  2,  9,  7, 20,  7, 17, 15, 19,  4,  6, 19,  4, 10,
+      4,  3,  4, 13,  2,  6,  5,  2, 13,  9,  2, 12, 19, 15,  4, 10, 17, 18, 16,
+      9,  4, 11,  5,  8, 15,  6, 17, 20,  3, 11,  5, 10,  2, 13,  7,  5, 17, 10,
+     10, 20,  4, 20, 10, 13, 19,  9, 16, 19,  4,  5,  2, 18, 16,  4, 13, 12, 13,
+     
+     15,  5,  7,  5, 17, 13, 14,  7, 14,  6,  1,  6,  2, 10,  6, 13,  8,  2, 13,
+      1, 10,  3,  8,  6,  8,  8, 14, 19, 18,  2,  9,  9, 11,  5,  8,  2,  1,  8,
+      7, 19, 12,  8,  9,  7, 14,  1,  4,  6, 19,  6, 17,  4, 14,  2, 18,  1, 19,
+     16, 17, 18,  2, 18,  6,  5, 17, 15, 15, 14,  6, 16,  3, 14, 15, 10,  9, 10,
+      9, 18,  5,  4,  8,  7, 12,  4,  6, 11, 14, 12,  4, 13, 19, 18, 16, 10,  2,
+     
+     19, 11,  6,  1, 10, 18,  9, 14,  7,  4, 14, 11, 17,  4, 17, 18, 18, 14, 19,
+     13,  6,  8,  5, 17,  5, 14,  7, 15, 18, 10, 13, 16, 14,  2, 16,  2, 17, 12,
+      4, 20,  6, 12,  9, 13, 12, 11,  7, 12,  2,  1,  7,  2,  7,  4, 11,  8, 11,
+     16, 17,  9, 14, 12, 13, 16,  8, 15,  6, 14, 17,  6, 12, 10,  8,  5, 19,  5,
+     13, 11,  2, 18,  4, 18,  7, 10,  5, 17,  6, 15,  7,  2, 16, 17, 14, 14, 17,
+     
+      6,  5, 19,  9, 15,  3,  9, 20, 15,  8, 18, 10,  4,  7, 15, 20,  6,  3,  4,
+     14, 17, 11, 15, 17, 13, 11, 18, 18, 10, 13, 10, 12, 19,  7, 10,  4,  3,  3,
+      3, 15,  9, 14,  3, 10,  7,  4, 16, 18, 17, 12, 15,  4, 16, 11,  5,  2,  2, 
+      1,  6, 17,  4, 13,  2,  6, 12,  1,  8,  8,  4, 14, 15, 15, 20, 14,  9, 12,
+     15, 16, 17, 10, 10,  1, 12, 15,  3, 15, 14, 20,  4, 11,  1, 20, 16, 17,  3,
+     
+      7,  3, 11, 18, 10, 10,  5,  8,  4,  5, 20, 19, 19, 20, 10,  7,  7,  2,  2,
+     10, 11,  1,  9, 13,  3,  4,  8, 19, 14,  3,  7, 18, 20,  8,  5, 12,  9,  5,
+     14,  9,  2, 14,  3, 12, 16,  6, 12, 14, 15, 16, 15,  9,  7,  2, 13, 19,  7,
+     12,  3, 10, 16,  5, 12, 10,  5,  1,  8,  7, 11, 12,  7,  4,  2, 12,  2,  7,
+     14, 17,  7,  2, 16, 20,  7, 14,  3,  5,  7, 15,  3,  4,  1,  4, 10, 20,  6,
+     
+     12,  4,  9, 16, 13, 10,  6,  1,  9,  7, 17, 18,  3, 20,  5, 19,  8,  6,  9, 
+     18, 14,  3,  3, 10, 18, 11, 19,  6,  9, 10,  6, 20, 17,  5,  2, 13, 14,  8,
+      9, 20, 15,  6, 14,  3, 18,  7, 19,  6, 11,  7, 12,  6,  8, 19, 15, 12, 12, 
+      9, 17, 11, 12,  9, 16,  5, 12, 12, 13,  3,  9, 18,  6,  5,  6,  5, 13, 17,
+      1,  9,  3, 10,  3,  4,  6, 12, 16,  1,  3, 20, 15,  7, 16, 18, 10,  9, 10,
+     
+     14, 11, 15,  6,  6,  3, 18, 10,  9, 20,  2, 17, 17, 12,  9,  8,  9, 10, 10,
+     14,  3, 13, 10, 12, 14, 18,  2,  1,  2, 15, 15,  6,  7, 14, 17, 15, 19, 12,
+     10, 11, 16,  5,  6,  6, 15, 11, 11, 16,  8, 14,  3,  7,  6,  7, 11,  8, 11,
+     11, 17, 15, 10,  5, 15, 10, 11, 16, 12,  6,  2, 16, 11, 17, 15,  1,  8, 11,
+      8,  7,  3, 17,  9, 15,  5, 11,  8,  1, 10,  8, 11,  3, 18,  7, 13,  9, 11, 
+     
+     12, 13, 18, 12,  1,  6,  3,  6, 13, 10, 17,  2, 10, 14, 16,  9, 20, 15,  1, 
+      5, 11,  5, 16,  4, 18,  8, 17, 20, 12, 16, 15,  4, 18,  8,  3, 11,  1, 15,
+      6, 15,  4, 11, 20,  2,  5,  7, 17,  3,  9, 12,  6,  3, 14, 17,  8, 10, 17,
+     19,  5,  8, 13, 14,  6,  7, 15, 10,  6, 19,  9, 12,  7,  5, 16, 19,  3,  7,
+      7, 19,  6, 19,  6,  7,  3, 10, 11, 11, 12,  8,  9, 15, 13,  8, 12, 11, 15,
+     
+     19, 15,  6, 11, 17, 11,  6,  1, 17,  6, 19,  6,  4,  1, 20,  8, 17, 19,  9,
+      2, 11, 10, 17,  1, 15,  6, 20,  5, 13, 13, 17,  4,  2,  1, 10,  9, 19, 13,
+      3, 12,  7,  8,  7,  4,  3,  4, 15, 16, 15,  7,  8, 16, 19, 15,  7, 11,  2,
+     18, 20,  2,  3,  4, 18,  6,  7,  2,  1, 12,  4, 19,  4,  9, 19,  8, 17, 15, 
+      7, 11,  4,  4, 17,  4,  5,  1,  5, 13, 12,  9, 17, 12, 10,  8,  2, 19, 15,
+     
+      3, 13, 20,  2, 10, 18,  6,  2,  6, 17, 19, 19,  2, 16,  1,  4, 15,  5,  1,
+     20, 11,  2, 11, 13,  5,  1, 11, 18,  6, 18, 13,  9, 16, 19,  8,  9, 15, 10,
+     11, 20, 17, 16, 15,  3, 13,  9,  5, 10, 10,  4, 12, 20,  5, 12, 11,  1, 18,
+     19, 10, 12,  9,  2, 12, 18, 10,  9,  5, 16,  6, 18, 13, 14,  7,  3, 17, 19,
+     10, 16,  3, 11,  3,  2, 17, 11,  6, 18, 15, 14,  6,  6, 10, 15, 17, 11,  5,
+     
+      2,  9, 15, 13,  7, 19,  1, 20,  8,  1, 11, 19, 17, 16, 19, 17, 19,  6,  1, 
+     17, 15, 18, 18, 12,  6,  9, 12, 20, 16,  5, 13,  8,  2, 18,  9,  7,  7, 16,
+     13,  2,  9, 11, 15,  7, 18, 14,  9, 20,  9, 17,  3,  4, 17, 11, 17, 14, 12,
+      4,  2, 13,  7, 10, 11, 17, 10,  9,  1, 15,  7,  6, 13, 16, 16,  4,  1, 16,
+     20,  7,  4,  7, 18,  3,  1, 13, 20, 11, 19, 19, 12, 13,  2,  1,  1, 12, 14,
+     
+      9, 18,  7,  1, 10,  7, 20,  1, 15, 18,  9,  8,  4, 18,  7, 16, 17, 12, 12,
+      7, 12, 20,  1,  3,  1,  2,  8,  3,  9, 11,  3, 18, 16, 10, 10, 15,  1, 17,
+      3,  2,  1, 16, 11, 13,  6, 15,  9,  6,  5,  6,  6, 14,  8, 11, 17, 17,  8,
+      1, 14, 10,  9, 17, 18,  2,  1, 20, 11, 10, 18, 17, 16,  3,  9, 10, 14, 11,
+      8, 10, 16, 16, 20, 16,  3,  4, 11, 17, 11,  6, 12, 15, 17,  4,  3, 16,  7,
+     
+      1,  9,  1, 13, 10,  6,  4, 16, 20, 18,  1, 14, 10, 14, 19,  6, 10,  5,  5,
+      6, 12,  7, 10, 14,  8,  5, 20, 17,  5, 15, 20, 12,  8,  3, 20, 10,  1,  4,
+      9,  2, 19, 10,  7,  8, 10, 17,  2,  6,  6, 16, 13,  3,  5, 19, 10, 12, 14,
+      8,  2, 17,  7,  9,  9, 11, 12,  9, 12, 10, 15, 17, 14, 11, 18,  7, 11, 12,
+     11, 15, 20,  7, 17, 18, 13, 10, 15, 11, 16, 19, 14,  9,  6,  5, 12, 11, 18,
+     
+     11, 10,  8, 12,  9,  8, 11, 13, 11, 14,  4, 11, 12, 18,  7, 18, 15, 17, 12,
+     10,  3,  2, 10,  4, 13, 14,  6,  2, 10, 11, 11, 14,  9, 19, 19, 16,  5, 18,
+      2,  6, 13, 12, 14, 10,  9, 17,  8,  4, 18,  8, 10,  9, 12,  8, 11,  7,  7,
+      5,  6,  5, 14, 19,  1,  2, 17,  5, 11,  2,  6, 17, 10, 17,  7,  5, 16,  8,
+      2, 18, 19,  9,  6, 12, 19,  6, 14,  3, 10, 20,  8,  4, 10, 10, 16,  5,  7,
+     
+     18, 11,  8,  4,  9,  3, 16,  4,  4, 18, 11,  6,  4,  6,  3,  9,  2,  8, 15,
+      1,  2,  7, 10,  9,  7, 20, 17,  9,  9, 17,  1,  8, 11, 16, 16, 20, 10, 14,
+      7,  2, 16, 19,  5, 13, 13, 7
+     
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(ocn_d20_df, set_fill_map["ocean"])
+```
+
+
+
+
+```{r simulation-dp}
+#|echo: FALSE
+#|eval: TRUE
+# merging the datasets
+dice_roll_data <- 
+  do.call(rbind,
+          list(white_d4_df, white_d6_df, white_d8_df, white_d10_df, 
+               `white_d%_df`, white_d12_df, white_d20_df,
+               grey_d4_df, grey_d6_df, grey_d8_df, grey_d10_df,
+               `grey_d%_df`, grey_d12_df, grey_d20_df,
+               black_d4_df, black_d6_df, black_d8_df, black_d10_df,
+               `black_d%_df`, black_d12_df, black_d20_df,
+               green_d4_df, green_d6_df, green_d8_df, green_d10_df,
+               `green_d%_df`, green_d12_df, green_d20_df,
+               teal1_d20_df, teal2_d20_df, mushroom_d20_df,
+               aub_d4_df, aub_d6_df, aub_d8_df, aub_d10_df,
+               `aub_d%_df`, aub_d12_df, aub_d20_df,
+               ocn_d4_df, ocn_d6_df, ocn_d8_df, ocn_d10_df,
+               `ocn_d%_df`, ocn_d12_df, ocn_d20_df
+               ))
+
+write.csv(x = dice_roll_data, row.names = FALSE,
+          file = "C:/Users/Duane/Documents/R/Projects/dice_rolls.csv")
+```
+
+```{r simulation-analysis-1}
+# loading the above dice-roll data
+dice_roll_df <- 
+  read.csv(file = "C:/Users/Duane/Documents/R/Projects/dice_rolls.csv")
+
+# function to identify streaks in the data
+find_run_lengths <- function(x, streaks.only = TRUE){
+  run_len_encoding <- rle(x)
+  rle_df <- data.frame(value = run_len_encoding$values,
+                       length = run_len_encoding$lengths)
+
+  if (streaks.only) {
+    rle_df[rle_df$length > 1L,]
+  } else {rle_df}
+}
+
+# function for multinomial proportion modelling
+rdirichlet <- # from the LearnBayes package
+  function (n, par) {
+    k = length(par)
+    z = array(0, dim = c(n, k))
+    s = array(0, dim = c(n, 1))
+    
+    for (i in 1:k) {
+      z[, i] = rgamma(n, shape = par[i])
+      s = s + z[, i]
+    }
+    
+    for (i in 1:k) {
+      z[, i] = z[, i] / s
+    }
+    
+    return(z)
+  }
+```
+
+```{r simple-eval}
+dice_roll_df_ <- 
+  dice_roll_df %>% 
+  mutate(set = factor(set, levels = sets),
+         die = factor(die, levels = paste0("d", c(4, 6, 8, 10, "%", 12, 20)))
+  ) %>% 
+  nest_by(set, die) %>% 
+  mutate(
+    die_val = sub("d", "", die),
+    die_val = ifelse(die_val == "%", 100, as.numeric(die_val)),
+    n_obs = length(data$result),
+    expected_count_per_side = 
+      case_when(die_val == 100 ~ n_obs / 10,
+                TRUE ~ n_obs / die_val),
+    mean_ = mean(data$result),
+    expected_mean = 
+      case_when(die_val == 100 ~ mean(0:9 * 10),
+                die_val == 10 ~ mean(1:10),
+                TRUE ~ mean(1:die_val)),
+    sd_ = sd(data$result),
+    expected_sd = 
+      case_when(die_val == 100 ~ sd(0:9 * 10),
+                die_val == 10 ~ sd(1:10),
+                TRUE ~ sd(1:die_val)),
+    result_tbl = list(table(data$result)),
+    chisq_pval = chisq.test(result_tbl)$p.value,
+    chisq_stat_sig_0.05 = chisq_pval <= 0.05,
+    roll_streaks = list(find_run_lengths(data$result, streaks.only = TRUE)),
+    roll_streak_tbl = list(table(roll_streaks))
+    )
+```
+
+```{r fairest-dice}
+# checking which dice per side across sets have largest p-values
+fairest_dice_top3 <- 
+  dice_roll_df_ %>% 
+  group_by(die) %>% 
+  arrange(desc(chisq_pval)) %>% 
+  mutate(p_val_rank = 1:n()) %>% 
+  ungroup() %>% 
+  filter(p_val_rank %in% c(1:3)) %>% 
+  select(set, die, chisq_pval, p_val_rank) %>% 
+  arrange(die, p_val_rank, set)
+
+fairest_dice_bot2 <- 
+  dice_roll_df_ %>% 
+  group_by(die) %>% 
+  arrange(desc(chisq_pval)) %>% 
+  mutate(p_val_rank = 1:n(), max_rank = n()) %>% 
+  ungroup() %>% 
+  mutate(bad = p_val_rank == max_rank - 1,
+         worse = p_val_rank == max_rank) |> 
+  filter(bad | worse) %>% 
+  select(set, die, chisq_pval, p_val_rank) %>% 
+  arrange(die, desc(p_val_rank), set)
+
+fairest_dice_top3
+
+fairest_dice_top3 |> 
+  group_by(set) |> 
+  summarize(top3_ct = n(), 
+            avg_rank = mean(p_val_rank), 
+            .groups = "drop") |> 
+  arrange(desc(top3_ct), avg_rank)
+# grey, then aubergine, then black, then white, then green 
+# (descending order of 'fairness')
+# aside from d20s, no real concerns of fairness for any observations
+# aubergine d20 is astonishingly 'fair'!
+
+fairest_dice_bot2
+
+fairest_dice_bot2 |> arrange(chisq_pval)
+# green d20 is clearly not random, nor is white d20
+# for other-sided dice even the 'worst' performers are solid except 
+# 'ocean' d12 ... expected value (6.3) isn't wildly off 'random' EV (6.5)
+# 'ocean' d6  ... expected value (3.5) exactly matches 'random' EV, 
+#   just more 3s than 1s 
+```
+
+
+```{r dice-eval-plots}
+# observed vs. expected mean / SD
+dice_mean_df_tbl <- 
+  dice_roll_df_ %>% 
+  select(set, die, observed_mean = mean_, expected_mean) %>% 
+  mutate("pct_diff" = (observed_mean - expected_mean) / expected_mean * 100) %>% 
+  pivot_longer(cols = ends_with("_mean"), names_to = "mean", values_to = "value") %>% 
+  mutate(type = sub("_mean", "", mean), var = "mean") %>% 
+  select(-mean)
+
+dice_sd_df_tbl <- 
+  dice_roll_df_ %>% 
+  select(set, die, observed_sd = sd_, expected_sd) %>% 
+  mutate("pct_diff" = (observed_sd - expected_sd) / expected_sd * 100) %>% 
+  pivot_longer(cols = ends_with("_sd"), names_to = "sd", values_to = "value") %>% 
+  mutate(type = sub("_sd", "", sd), var = "sd") %>% 
+  select(-sd)
+
+dice_mean_sd_tbl <- 
+  full_join(dice_mean_df_tbl, dice_sd_df_tbl, 
+            by = c("set", "die", "var", "type", "value", "pct_diff")) %>% 
+  mutate(gt_10pct_diff = abs(pct_diff) > 10)
+
+mean_sd_by_set_plots <- 
+  lapply(seq_along(sets), function(i) {
+    ggplot(data = dice_mean_sd_tbl[dice_mean_sd_tbl$set == sets[i],],
+           aes(x = type, ymin = 0, ymax = value, y = value, color = gt_10pct_diff)) +
+      facet_grid(rows = vars(die), cols = vars(var), scales = "free_y") +
+      geom_pointrange() +
+      labs(title = "Expected vs. Observed Mean/SD of Dice Rolls",
+           subtitle = paste(sets[i], "dice"),
+           color = ">10% diff.\nvs. expected") +
+      scale_color_manual(values = c("FALSE" = "grey30", "TRUE" = "orange3")) +
+      theme_bw()
+  })
+
+# focus on cases of interest
+focus_mean_sd_plots <- 
+  dice_mean_sd_tbl %>% 
+  filter(gt_10pct_diff) %>% 
+  nest_by(set, die) %>% 
+  mutate(
+    plot_ = list(
+      ggplot(data = data,
+           aes(x = type, ymin = 0, ymax = value, y = value)) +
+      facet_wrap(facets = vars(var), scales = "free_y", ncol = 2) +
+      geom_pointrange(color = "orange3") +
+      labs(title = "Expected vs. Observed Mean/SD of Dice Rolls",
+           subtitle = paste(set, die)) +
+        theme_bw()
+    )
+  ) %>% 
+  pull(plot_)
+
+mean_sd_by_set_plots
+focus_mean_sd_plots
+```
+
+```{r streak-analysis}
+streak_color_map <- 
+  c("1" = "blue4", "2" = "blue2", "3" = "dodgerblue3",
+    "4" = "firebrick1", "5" = "firebrick", "6" = "red4")
+
+dice_streaks_plots <- 
+  lapply(1:nrow(dice_roll_df_), function(i) {
+    df_0 <- dice_roll_df_$roll_streak_tbl[[i]]
+    df_ <- data.frame(value = rep(rownames(df_0), times = ncol(df_0)),
+                      strk_len = rep(colnames(df_0), each = nrow(df_0)))
+    df_$value <- as.factor(as.integer(df_$value))
+    
+    df_$count <- as.integer(df_0)
+
+    ggplot(df_, aes(x = value, y = count, fill = strk_len)) +
+      geom_col(position = position_dodge(width = 0.7)) +
+      labs(title = "Streak length by value",
+           subtitle = paste(dice_roll_df_$set[i], dice_roll_df_$die[i])) +
+      scale_fill_manual(values = streak_color_map) +
+      theme_bw()
+  })
+
+streak_sim <- 
+  lapply(1:100, function(i) {
+    roll_sim <- roll(counts = 1851, sides = 20, seed = i)[[1]][[1]]
+    rle_ <- find_run_lengths(roll_sim, streaks.only = TRUE)
+    rle_
+  }) %>% 
+  bind_rows() %>% 
+  table()
+
+streak_sim_df <- 
+  data.frame(value = rep(rownames(streak_sim), times = ncol(streak_sim)),
+             strk_len = rep(colnames(streak_sim), each = nrow(streak_sim)))
+streak_sim_df$value <- as.factor(as.integer(streak_sim_df$value))
+streak_sim_df$count <- as.integer(streak_sim)
+
+streak_sim_plot <- 
+  ggplot(streak_sim_df, aes(x = value, y = count, fill = strk_len)) +
+  geom_col(position = position_dodge(width = 0.7)) +
+  labs(title = "Streak length by value",
+       subtitle = "Simulated d20 rolls") +
+  scale_fill_manual(values = streak_color_map) +
+  theme_bw()
+
+dice_streak_focus <- c(7, 14, 21, 28, 29, 30, 31, 38, 40, 45)
+lapply(seq_along(dice_streak_focus), function(i){
+  dice_streaks_plots[[dice_streak_focus[i]]]
+  })
+streak_sim_plot
+```
+
+```{r comparison-stat-sig}
+#|fig.width: 10 
+#|fig.height: 4
+
+# plots of (Chi square HoV) stat-sig dice - side-by-side for same-die sets
+comparison_plots_df <- 
+  dice_roll_df_ %>%
+  filter(chisq_stat_sig_0.05 |
+         (set == "aubergine" & die == "d20")) %>% 
+  nest_by(die)
+
+set_color_map <- 
+  c("white" = "black", "grey" = NA_character_,  
+    "black" = NA_character_, "green" = NA_character_, 
+    "teal1" = NA_character_, "teal2" = NA_character_,
+    "mushroom" = NA_character_, "aubergine" = NA_character_,
+    "ocean" = NA_character_)
+
+comparison_plots <- 
+  lapply(1:nrow(comparison_plots_df), function(i) {
+    df_ <- comparison_plots_df[i,]
+    summary_data <- df_$data
+    results_data <- 
+      lapply(summary_data, `[[`, "data") %>% 
+      bind_rows() %>% 
+      mutate(set = rep(summary_data[[1]]$set, times = summary_data[[1]]$n_obs))
+    
+    ggplot(results_data, aes(x = result, fill = set, color = set)) +
+      geom_hline(data = summary_data[[1]], 
+                 aes(yintercept = expected_count_per_side),
+                 linetype = "dashed") +
+      geom_bar(position = position_dodge(width = 0.7)) +
+      labs(title = paste("Observed Counts for", df_$die, "Rolls by Set"),
+           subtitle = "Horizontal line: expected roll count (fair die)") +
+      scale_x_continuous(
+        breaks = (min(results_data$result)):(max(results_data$result)), 
+        minor_breaks = FALSE
+        ) +
+      scale_color_manual(values = set_color_map, guide = "none") +
+      scale_fill_manual(values = set_fill_map) +
+      theme_bw()
+  })
+
+comparison_plots
+```
+
+```{r d20-chisq-sim}
+#|eval: FALSE
+
+# simulating p-values from subsampling observed rolls - checking if
+#  stat. sig. p-vals are more a result of large sample size
+boot_chisq_pval <- 
+  function(data, subset_var, value_var, nsim = 1e4, n = 500, seed = 42) {
+    p_val_vec <- vector("numeric", nsim)
+    
+    data_sets <- lapply(1:length(unique(data[[subset_var]])), function(i) {
+      set <- data[data[[subset_var]] == unique(data[[subset_var]])[i], "set"][1]
+      data <- data[data[[subset_var]] == unique(data[[subset_var]])[i], 
+                   value_var]
+      list("set" = set, "data" = data)
+    })
+    
+    p_val_mat <- 
+      matrix(nrow = nsim, ncol = length(data_sets) + 1,
+             dimnames = list(NULL, 
+                             c("seed", 
+                               vapply(data_sets, `[[`, character(1L), 1)))
+             )
+    
+    for (i in 1:nrow(p_val_mat)) {
+      for (j in 2:ncol(p_val_mat)) {
+        set.seed(seed + i)
+        p_val_mat[i, 1] <- seed + i 
+        p_val_mat[i, j] <- 
+          chisq.test(
+            table(
+              sample(data_sets[[j - 1]]$data, size = n, replace = FALSE)
+              )
+            )$p.value
+      }
+    }
+    p_val_mat
+  }
+
+
+d20_sample_sim_n1000 <- 
+  boot_chisq_pval(
+    data = dice_roll_df[dice_roll_df$die == "d20", c("set", "result")],
+    subset_var = "set",
+    value_var = "result",
+    nsim = 5e3, n = 1000, seed = 42
+  )
+
+d20_sample_sim_n750 <- 
+  boot_chisq_pval(
+    data = dice_roll_df[dice_roll_df$die == "d20", c("set", "result")],
+    subset_var = "set",
+    value_var = "result",
+    nsim = 5e3, n = 750, seed = 42
+  )
+
+d20_sample_sim_n500 <- 
+  boot_chisq_pval(
+    data = dice_roll_df[dice_roll_df$die == "d20", c("set", "result")],
+    subset_var = "set",
+    value_var = "result",
+    nsim = 5e3, n = 500, seed = 42
+  )
+
+d20_sample_sim_n1000_df <- 
+  apply(d20_sample_sim_n1000, 2, quantile, probs = c(0.10, 0.50, 0.90)) %>% 
+  as.data.frame() %>% 
+  select(-seed) %>% 
+  mutate(quantile = rownames(.)) %>% 
+  pivot_longer(cols = all_of(sets), names_to = "set", values_to = "value") %>% 
+  mutate(n = 1000) %>% 
+  pivot_wider(names_from = "quantile", values_from = "value")
+
+d20_sample_sim_n750_df <- 
+  apply(d20_sample_sim_n750, 2, quantile, probs = c(0.10, 0.50, 0.90)) %>% 
+  as.data.frame() %>% 
+  select(-seed) %>% 
+  mutate(quantile = rownames(.)) %>% 
+  pivot_longer(cols = all_of(sets), names_to = "set", values_to = "value") %>% 
+  mutate(n = 750) %>% 
+  pivot_wider(names_from = "quantile", values_from = "value")
+
+d20_sample_sim_n500_df <- 
+  apply(d20_sample_sim_n500, 2, quantile, probs = c(0.10, 0.50, 0.90)) %>% 
+  as.data.frame() %>% 
+  select(-seed) %>% 
+  mutate(quantile = rownames(.)) %>% 
+  pivot_longer(cols = all_of(sets), names_to = "set", values_to = "value") %>% 
+  mutate(n = 500) %>% 
+  pivot_wider(names_from = "quantile", values_from = "value")
+
+rm(d20_sample_sim_n1000, d20_sample_sim_n750, d20_sample_sim_n500)
+
+merge_df <- function(df_list) {
+    Reduce(function(x, y) merge(x, y, all = TRUE), df_list)
+    }
+
+d20_sample_sim_df <- 
+  merge_df(list(d20_sample_sim_n500_df, 
+                d20_sample_sim_n750_df,
+                d20_sample_sim_n1000_df)) 
+
+write.csv(x = d20_sample_sim_df,
+          file = "C:/Users/Duane/Documents/R/Projects/d20_sample_sim.csv", 
+          row.names = FALSE)
+```
+
+```{r d20-chisq-sim-viz}
+d20_sample_sim_df <- 
+  read.csv("C:/Users/Duane/Documents/R/Projects/d20_sample_sim.csv")
+
+set_d20_ranks <- 
+  d20_sample_sim_df |> 
+  group_by(set) |> 
+  summarize(X50. = mean(X50.), .groups = "drop") |> 
+  arrange(desc(X50.)) |> 
+  pull(set)
+
+set_d20_ranks_abbrevmap <- 
+  c("aubergine" = "aub", 
+    "grey" = "gry",
+    "teal2" = "tl2",
+    "ocean" = "ocn",
+    "mushroom" = "msh",
+    "teal1" = "tl1",
+    "black" = "blk",
+    "white" = "wht",
+    "green" = "grn")
+
+d20_sample_sim_df |> 
+  mutate(set = factor(set, levels = set_d20_ranks)) |> 
+  ggplot(aes(x = set, ymin = X10., y = X50., ymax = X90., color = set)) +
+  geom_hline(yintercept = 0.05, linetype = "dashed") +
+  geom_pointrange() +
+  facet_wrap(facets = vars(n), ncol = 2) +
+  labs(title = "p-values of Chi-square test of d20 by set",
+       subtitle = "Summary of 1,000 samples of size 500 / 1000",
+       y = "Chi Square p-value",
+       caption = "Sampling without replacement; 10/50/90% p-value summary; ref. line at 0.05") +
+  scale_color_manual(values = set_fill_map, guide = "none") +
+  theme_bw() + 
+  theme(panel.grid.major.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+```
+
+
+```{r bayesian-multinomial-proportions}
+#|fig.width: 9 
+#|fig.height: 8
+
+# brms note for Dirichlet model:
+#https://discourse.mc-stan.org/t/dirichlet-regresion-using-brms/8591
+
+set.seed(42)
+d20_bayesian_pcts_df <- 
+  data.frame(
+    set = sets,
+    die = "d20"
+  ) %>% 
+  left_join(
+    y = dice_roll_df_ %>% 
+      filter(die == "d20") %>% 
+      select(set, die, results = result_tbl),
+    by = c("set", "die")
+    ) %>% 
+  mutate(
+    thetas_df = lapply(1:nrow(.), function(i) {
+      set_ <- .$set[i]
+      die_ <- .$die[i]
+      
+      sim_df <- 
+        rdirichlet(n = 1e3, par = unlist(unname(.$results[i])) + 1) %>% 
+        as.data.frame()
+      
+      colnames(sim_df) <- paste0("_", 1:20)
+      sim_df %>% 
+        pivot_longer(cols = everything(), names_to = "side", values_to = "value",
+                     names_prefix = "_") %>% 
+        mutate(set = set_, die = die_)
+    })
+  )
+
+d20_bayesian_pcts_df$iter <- 
+  rep(
+    rep(1:(nrow(d20_bayesian_pcts_df) / 
+             (20 * length(unique(d20_bayesian_pcts_df$set)))), 
+      each = 20),
+    times = length(unique(d20_bayesian_pcts_df$set))
+  )
+
+ d20_bayesian_pcts_df <- 
+   lapply(1:nrow(d20_bayesian_pcts_df), function(i) {
+     d20_bayesian_pcts_df$thetas_df[[i]]
+   }) %>% 
+   bind_rows() %>% 
+   mutate(side = factor(side, levels = as.character(1:20)))
+
+set_lntyp_map <- 
+  c("white" = "solid", "grey" = "solid", 
+    "black" = "solid", "green" = "solid",
+    "teal1" = "solid", "teal2" = "solid",
+    "mushroom" = "solid", "aubergine" = "dashed",
+    "ocean" = "solid")
+   
+d20_bayesian_pcts_plot <- 
+  ggplot(d20_bayesian_pcts_df, aes(x = value, color = set, linetype = set)) +
+  facet_wrap(facets = vars(side), ncol = 4) +
+  geom_vline(xintercept = 1 / 20, linetype = "dashed") +
+  geom_density(linewidth = 0.8) +
+  labs(title = "Bayesian posterior density of d20 roll probabilities by die set",
+       subtitle = "uniform Dirichlet prior, 1851 rolls per die",
+       caption = "Reference line at 5%") +
+  scale_x_continuous(labels = scales::percent) +
+  scale_color_manual(values = set_fill_map) +
+  scale_linetype_manual(values = set_lntyp_map) +
+  theme_bw()
+
+d20_bayesian_pcts_plot
+```
+
+```{r bayesian-multinomial-credint}
+#|fig.height: 8
+
+d20_bayesian_credint_df <- 
+  d20_bayesian_pcts_df |> 
+  group_by(set, side) |> 
+  summarize(
+    credint_pct2.5 = quantile(value, 0.025),
+    credint_pct50 = median(value),
+    credint_pct97.5 = quantile(value, 0.975),
+    .groups = "drop"
+  )
+
+d20_bayesian_credint_df <- 
+  mutate(d20_bayesian_credint_df, 
+         set_abbrev = vapply(1:nrow(d20_bayesian_credint_df), function(i) {
+           set_d20_ranks_abbrevmap[grep(d20_bayesian_credint_df$set[i],
+                                        names(set_d20_ranks_abbrevmap))]
+           }, character(1L))
+    ) |> 
+  mutate(set_abbrev = factor(set_abbrev, levels = unname(set_d20_ranks_abbrevmap)),
+         set = factor(set, levels = names(set_d20_ranks_abbrevmap)))
+
+# plotting the credible intervals
+d20_bayesian_credint_df |> 
+  ggplot(aes(x = set_abbrev, 
+             ymin = credint_pct2.5, y = credint_pct50, ymax = credint_pct97.5,
+             color = set)) + 
+  facet_wrap(facets = vars(side), ncol = 4) +
+  geom_hline(yintercept = 1 / 20, linetype = "dashed") +
+  geom_pointrange() +
+  labs(title = "d20 95% Credible Intervals with Median by Set and Side",
+       caption = "Reference line at 5%") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_color_manual(values = set_fill_map) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 40, hjust = 1, vjust = 1))
+```
+
+```{r bayesian-multinomial-1vs20}
+# deep dive: posterior probability 1 vs. 20
+d20_bayesian_credint_df |> 
+  filter(side %in% c("1", "20")) |>
+  ggplot(aes(x = set, 
+             ymin = credint_pct2.5, y = credint_pct50, ymax = credint_pct97.5,
+             color = set, group = side)) +
+  geom_hline(yintercept = 1 / 20, linetype = "dashed") +
+  geom_pointrange(fatten = 10, shape = 22, fill = "white", 
+                  position = position_dodge(width = 0.5)) +
+  geom_text(aes(label = side), size = 3, color = "black",
+            position = position_dodge(width = 0.5), vjust = 0.5) +
+  labs(title = "d20 95% Credible Intervals with Median by Set and Side",
+       subtitle = "Zoom in for P(1) and P(20)",
+       caption = "Reference line at 5%") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_color_manual(values = set_fill_map, guide = "none") +
+  theme_bw()
+
+# probability 1-3 vs 18-20
+btm_top <- 3
+
+d20_bayesian_btm_df <- 
+  d20_bayesian_pcts_df |> 
+  filter(side %in% c(1:btm_top)) |> 
+  group_by(set, iter) |> 
+  summarize(value = sum(value), .groups = "drop") |> 
+  mutate(grp = paste("1 to", btm_top)) |> 
+  group_by(grp, set) |> 
+  summarize(
+    credint_pct2.5 = quantile(value, 0.025),
+    credint_pct50 = median(value),
+    credint_pct97.5 = quantile(value, 0.975),
+    .groups = "drop"
+  )
+
+d20_bayesian_top_df <- 
+  d20_bayesian_pcts_df |> 
+  filter(side %in% c((20 - btm_top + 1):20)) |> 
+  group_by(set, die, iter) |> 
+  summarize(value = sum(value), .groups = "drop") |> 
+  mutate(grp = paste((20 - btm_top + 1), "to 20")) |> 
+  group_by(grp, set) |> 
+  summarize(
+    credint_pct2.5 = quantile(value, 0.025),
+    credint_pct50 = median(value),
+    credint_pct97.5 = quantile(value, 0.975),
+    .groups = "drop"
+  )
+
+d20_bayesian_lohi_df <-
+  full_join(d20_bayesian_btm_df, d20_bayesian_top_df,
+            by = intersect(colnames(d20_bayesian_btm_df),
+                           colnames(d20_bayesian_top_df)))
+d20_bayesian_lohi_df |> 
+  mutate(set = factor(set, levels = names(set_d20_ranks_abbrevmap))) |> 
+  ggplot(aes(x = set, 
+             ymin = credint_pct2.5, y = credint_pct50, ymax = credint_pct97.5,
+             color = set, shape = grp)) +
+  geom_hline(yintercept = btm_top / 20, linetype = "dashed") +
+  geom_pointrange(fatten = 5, fill = "white", 
+                  position = position_dodge(width = 0.5)) +
+  labs(title = "d20 95% Credible Intervals with Median by Set and Side",
+       subtitle = paste("Zoom in for lowest and highest", btm_top, "sides"),
+       caption = paste("Reference line at", paste0(btm_top / 20 * 100, "%")),
+       shape = NULL) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_color_manual(values = set_fill_map, guide = "none") +
+  scale_shape_manual(values = c(25, 24)) +
+  theme_bw()
+```
+
+
