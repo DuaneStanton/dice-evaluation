@@ -255,7 +255,7 @@ plot_result <- function(df, fill_color = "dodgerblue2") {
 
 
 set_fill_map <- 
-  c("white" = "firebrick", "grey" = "grey40", 
+  c("white" = "ivory3", "grey" = "grey40", 
     "black" = "grey10", "green" = "green4",
     "teal1" = "darkcyan", "teal2" = "steelblue4",
     "mushroom" = "gold3", "aubergine" = "#614051",
