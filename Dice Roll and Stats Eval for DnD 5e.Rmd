@@ -1,0 +1,775 @@
+---
+title: "Dice Roll / Character Stats Eval (DnD 5e)"
+author: "Duane Stanton"
+date: "`r format(Sys.Date(), '%d-%b-%Y')`"
+output: 
+  html_document:
+    theme: paper
+    highlight: haddock 
+    toc: true
+    toc_float: true
+    code_folding: hide
+---
+
+<style type="text/css">
+body, td {
+   font-size: 15px;
+}
+code.r{
+  font-size: 15px;
+}
+pre {
+  font-size: 15px
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r pkg-load, message = FALSE}
+pkgs <- c("dplyr", "tidyr", "ggplot2", "purrr", "scales", "knitr", "kableExtra")
+for (i in seq_along(pkgs)) {library(pkgs[i], character.only = TRUE)}
+```
+
+
+# Purpose of This File
+
+When creating a DnD character, alongside thinking about their backstory, motivation, etc., we need to determine their abilites in six domains: Strength, Dexterity, Constitution, Intelligence, Wisdom, and Charisma.
+
+Each of these 'domain-area abilites' is scored on a scale where (in DnD 5e) '10' is a baseline for a 'regular' non-monster character, '8' is below-average (but not completely incompetent), '12' is above-average, and 20 is legendary.
+
+To give one example, let's consider Constitution, the ability determining 'Health, stamina, vital force' [Player's Handbook, p12]; a character with a score of '8' might be considered sickly or frail, but isn't going to die if someone sneezes too hard near them. A character with a score of '20' might be able to withstand a physical blow that would easily kill a regular character.
+
+To give another example, Intelligence measures 'Mental acuity, information recall, analytical skill' [PHB, p12]. A character with a score of '8' may be a bit slow on the uptake, but if you play the 'got your nose' gag on them, they aren't going to think you _actually_ took their nose. A character with a score of '20' will probably have an encyclopedic knowledge of the world around them, at least in areas they've focused on (e.g. arcana for a wizard).
+
+Put shortly, ability scores 'define' key attributes of our characters - but we don't necessarily care about the scores themselves beyond them fleshing out the characters as we role-play them. When it comes to _gameplay_, what actually matters are the modifiers to dice rolls relevant to the given ability. Here's a table breaking down how ability scores map to particular ability modifiers in DnD 5e [PHB p.13]:
+
+```{r ability-score-mod-tbl}
+mod_tbl <- 
+data.frame(
+  Score = c("1", "2-3", "4-5", "6-7", "8-9", "10-11", "12-13", "14-15",
+            "16-17", "18-19", "20-21"),
+  Modifier = -5:5
+) 
+
+mod_tbl |> 
+  arrange(desc(Modifier)) |> 
+  kbl(format = "html") |>
+  column_spec(column = 2, bold = TRUE,
+              color = ifelse(rev(mod_tbl[, 2]) < 0, "red", "black")
+              ) |> 
+  kable_styling(full_width = FALSE, 
+                bootstrap_options = c("striped", "bordered"))
+```
+
+The formula for calculating a specific modifier for a specific ability score is listed below, but here are the important things to know about it: 
+
+- Ability scores above 11 _improve_ our chances in accomplishing difficult (but doable, by the dungeon master's [DM's] judgment) feats, and ability scores below 10 _harm_ our chances.  
+
+- New characters typically have ability scores in the 8-15 range, though depending on your character-generation approach this can vary.  
+
+Here's a specific ability of how ability modifiers impact gameplay:
+
+Eric the Cleric has a Dexterity (DEX) score of 12, and is wearing armor with an Armor Class (AC) of 13. When a monster tries to hit Eric with a physical attach and the DM rolls a 20-sided die (d20) to see if the attack lands, any roll less than [13 + 1 =] 14 is a 'miss'; that's because the attack must 'beat' the combination of Eric's armor score (13) and their dexterity modifier (+1). By the same logic, if Eric has a DEX score of 8, an attack roll of 12 or better would land, as the DEX modifier would be -1. Hopefully this example shows how ability modifiers don't necessarily _predetermine_ whether an event does or doesn't take place - it just 'nudges the odds'.
+
+_Note: outside of combat, much of the success/failure of ability-based actions may be at the DM's discretion; even if you have a very high strength score (and so a high modifier), the DM may decide 'I try to punch the moon out of orbit' isn't something you can actually roll to succeed or fail at. By the same token, 'I try to lift the timber beam off the tavern owner' might be an action the DM decides a high-strength character would succeed at without needing to roll for._
+
+Below, I've analyzed how different approaches to generating ability scores impact 1) ability modifiers and 2) the corresponding (underlying) ability scores.
+
+To break down the results:  
+
+- The 'classic' approach [PHB, p13] has pretty good odds of resulting in a character with two fairly high ability modifiers, two to three middling to neutral modifiers, and one or two slightly negative modifiers (among the six ability domains); random chance of the dice rolls means that isn't guaranteed, though.  
+
+- The 'point-buying' approach [PHB, p13] is a sort of 'higher floor, lower ceiling' alternative to letting the luck of dice rolls determine your character's results; depending on how you allocate scores to you character, they may have all middling (positive) modifiers, or a few slightly more positive modifiers balanced with some slightly negative ones. This assumes you're allocating the full availability of points - if you want your character 'playing life on hard mode', they'll obviously have worse modifiers.  
+
+- An alternative 'homebrew' approach discussed below is a sort of 'augmented' form of the 'classic' approach; characters are pretty likely to have one very high modifier, a second pretty high one, two 'middling' positive modifiers, and two slightly positive or slightly negative modifiers. The top-two abilities are pretty likely to be better than you'd get with the 'classic' approach.  
+
+_Note: All of the analysis below is done __before__ you add any race- or class-based bonuses to abilities; if you're adding a +2 bonus to an ability score, just add +1 to the given ability modifier in the section below._
+
+# Analysis Code
+
+```{r dnd-stats-fxns}
+# DnD character generation option: roll 4d6, take the top 3
+# simulating to check distribution of that approach
+
+# function to simulate dice rolls ==============================================
+# inputs:
+# - counts: vector for number of rolls
+# - sides: vector of sides per die (aligned with counts)
+# - seed: number to set random number generator seed for replication
+#     default (NULL) sets no RNG seed
+# - drop.lowest.n: vector to specify if dropping the lowest 'n' results
+#     default (NULL) will drop none for any roll
+#     a single number will apply that number to any roll
+#     a vector of 
+# output:
+# - list with 1 entry per roll set; each entry has the final rolls
+#     (excluding any lowest dropped rolls if specified) and sum of the set
+#     the final list entry is the sum across all roll sets
+roll <- function(counts, sides, seed = NULL, drop.lowest.n = NULL) {
+  if (length(counts) != length(sides)) {stop("counts and sides lengths don't match")}
+  if (!all(sides %in% c(4, 6, 8, 10, 100, 12, 20))) {
+    stop("sides can only contain 4, 6, 8, 10, 100 (%), 12, 20")}
+  set.seed(seed)
+  pct_idx <- sides == 100
+  
+  if (is.null(drop.lowest.n)){d.l.n <- rep(0, length(counts))
+  } else {
+    if (any(drop.lowest.n >= counts)) {stop("drop.lowest.n must be at most counts - 1")}
+    if (length(drop.lowest.n) == 1L) {d.l.n <- rep(drop.lowest.n, length(counts))
+    } else {
+      if (length(drop.lowest.n) != length(counts)) {
+        stop("drop.lowest.n must be one of: same length as counts, a single number, or NULL")
+      }
+      d.l.n <- drop.lowest.n
+      }
+  }
+  
+  # check feasibility of dropping lowest 'n' rolls in each case
+  if (any(d.l.n < 0)) {stop("drop.lowest.n cannot be negative")}
+
+  roll_set <- 
+    lapply(1:length(sides), function(i) {
+      if (pct_idx[i]) {
+        ones <- sample(0:9, size = counts[i], replace = TRUE)
+        tens <- sample(0:9 * 10, size = counts[i], replace = TRUE)
+        rslt <- tens + ones
+        rslt[rslt == 0] <- 100
+        
+        if (d.l.n[i] > 0) {rslt <- (rslt[order(rslt)])[-c(1:d.l.n[i])]}
+        rslt <- list("rolls" = rslt, "sum" = sum(rslt))
+        rslt
+      } else {
+        rslt <- sample(1:sides[i], size = counts[i], replace = TRUE)
+        if (d.l.n[i] > 0) {rslt <- (rslt[order(rslt)])[-c(1:d.l.n[i])]}
+        rslt <- list("rolls" = rslt, "sum" = sum(rslt))
+        rslt
+        }
+      })
+  
+  names(roll_set) <- paste0(counts, "d", ifelse(pct_idx, "%", sides))
+  sums <- 
+    vapply(seq_along(roll_set), function(i){roll_set[[i]]$sum}, numeric(1L)) 
+  
+  roll_set[[length(roll_set) + 1]] <- c("ovr total" = sum(sums))
+  
+  roll_set
+}
+
+# function to classify ability modifier based on ability score =================
+# inputs:
+# - scores: vector of ability scores
+# - min: minimum allowed score (default is PHB p13 min., NULL to cancel)
+# - max: maximum allowed score (default is PHB p13 max., NULL to cancel)
+# output:
+# - vector of ability score modifiers (adds to applicable rolls)
+get_ability_mod <- function(scores, min = 1, max = 30) {
+  if (!is.null(min) && any(scores < min)){
+    stop("min is non-NULL and one or more scores < min")}
+  if (!is.null(max) && any(scores > max)){
+    stop("max is non-NULL and one or more scores > max")}
+  
+  floor((scores - 10) / 2)
+}
+
+sim_length <- 1e5
+```
+
+```{r spider-plot-fxn, include=FALSE}
+# code source: https://towardsdatascience.com/how-to-make-a-spider-chart-in-r-using-ggplot2-85a4f1898cab
+```
+
+
+# Ability Modifier Analyses
+
+## Why Ability Modifiers and not Ability Scores?
+
+Basically, because the modifiers are the thing we _actually_ care about. Ability scores are the 'big' number we roll for, but the ability modifiers (that are translated from the ability scores using the formula noted below) is what we actually add to our rolls. When rolling a Dexterity saving throw, a DEX score of either 12 or 13 lets us add 1 to our roll result (DEX modifier +1).
+
+That said, if our character has an odd-numbered ability score, we could potentially boost our ability modifier with an item, a feat, or an ability score improvement that grants us a +1 boost to that ability.
+
+The formula:
+
+$$\text{ability score modifier} = \text{floor}\left(\frac{\text{ability score} - 10}{2}\right)$$
+where 'floor' indicates rounding _down_ to the nearest integer.
+
+_Note: the next section 'Ability Score Analyses' repeats the analysis for ability scores - this_ can _be useful if you're planning to play strategically (e.g. you want your character to have odd ability scores so an ability score increase results in an increase in the ability modifier)_
+
+## Classic Approach
+
+The 'classic' approach to generating character ability scores:
+
+- Roll four 6-sided dice (4d6)  
+- Drop the lowest score and sum the remaining three  
+- Repeat this process five more times to get your six ability scores, then allocate as you see fit 
+
+Here's the proportion of different ability score modifiers from `r sim_length` simulations; ability '1' is just whichever ability score has been assigned the highest modifier, then '2', etc.
+
+```{r sim-eval-classic}
+# approach 1: 'classic' DnD - 4d6, drop lowest
+sim_rolls_classic_df <- 
+  lapply(1:sim_length, function(i) {
+    roll_set_6 <- 
+      roll(counts = rep(4, 6), 
+           sides = rep(6, 6), 
+           seed = i, 
+           drop.lowest.n = 1)
+    
+    rslt <- 
+      data.frame(
+        sim = i,
+        ability = 1:6,
+        score = 
+          vapply(1:6, function(i) {
+            roll_set_6[[i]]$sum}, integer(1L)),
+        total = c(roll_set_6[[7]], rep(NA_integer_, 5))
+        )
+    
+    # abilities are assigned from the 'pool' of 6 results;
+    #   it makes sense to assume top scores go to highest-importance abilities
+    rslt$score <- rslt$score[rev(order(rslt$score))]
+    rslt$mod <- get_ability_mod(rslt$score)
+    
+    rslt
+  }) |> 
+  bind_rows()
+
+sim_rolls_classic_pct_df <- 
+  sim_rolls_classic_df |> 
+  mutate(ability = factor(ability)) |> 
+  group_by(ability, mod) |> 
+  summarize(count = n(), .groups = "drop") |> 
+  group_by(ability) |> 
+  mutate(percent = count / sum(count) * 100) |> 
+  ungroup()
+
+
+(bar_plot_classic <- 
+  ggplot(sim_rolls_classic_pct_df, aes(x = mod, y = percent)) +
+    facet_wrap(facets = vars(ability)) +
+    geom_bar(stat = "identity", linewidth = 1) +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    labs(title = "'Classic' method simulated ability modifier results",
+         x = "Ability modifier",
+         y = "Percent of simulations") +
+    scale_x_continuous(breaks = c(-3:4), minor_breaks = FALSE) +
+    theme_light())
+
+sim_rolls_classic_tbl <- 
+  sim_rolls_classic_pct_df |> 
+  mutate(percent = sprintf("%.1f", percent) |> as.numeric()) |> 
+  ungroup() |> 
+  select(-count) |> 
+  pivot_wider(names_from = ability, values_from = percent) |> 
+  arrange(desc(mod))
+
+# secondary analysis: how does roll total differ vs. the point-buy approach?
+sim_rolls_classic_totals_vec <- 
+  sim_rolls_classic_df$total[!is.na(sim_rolls_classic_df$total)]
+
+diff_vs_pointbuy_classic_vec <- sim_rolls_classic_totals_vec - (6 * 8 + 27)
+```
+
+__Percentage (estimated probability) of each modifier per 'ability' slot__
+
+```{r sim-classic-tbl, result='asis'}
+sim_rolls_classic_tbl_ <- 
+  kbl(sim_rolls_classic_tbl, format = "html") |> 
+  column_spec(column = 1, bold = TRUE,
+              color = ifelse(unlist(sim_rolls_classic_tbl[, 1]) < 0, "red", "black")
+              )
+
+for (i in 1:6) {
+  sim_rolls_classic_tbl_ <-
+    sim_rolls_classic_tbl_ |> 
+    column_spec(column = i + 1, bold = FALSE, color = "black",
+                background = 
+                  spec_color(unlist(sim_rolls_classic_tbl[, i + 1]),
+                             begin = 0.1, end = 1)
+                )
+}
+
+sim_rolls_classic_tbl_ |> 
+  kable_styling(full_width = FALSE, 
+                bootstrap_options = c("striped", "bordered"))
+```
+
+## 'Point-buying' Approach
+
+Under this approach, players start with a character having an ability score of 8 across all six attributes; they they have 27 points to allocate to improve scores based on the following 'costs':
+
+```{r pointbuy-cost-tbl}
+pointbuy_costs_tbl <- data.frame(score = c(8:15), cost = c(0:5, 7, 9))
+
+kbl(pointbuy_costs_tbl, format = "html") |> 
+  kable_styling(full_width = FALSE, 
+                bootstrap_options = c("striped", "bordered")) |>  
+  footnote(general = "under this approach, 15 is the\nmaximum allowed score")
+```
+
+```{r sim-eval-pointbuy}
+# approach 2: 'point buy' 
+# - all abilities start at 8
+# - spend 1 point for each score increase up to 13 (e.g. 4pts to reach 12)
+# - spend additional point to move up to 14 (spend 7 points)
+# - spend additional 2 points to move up to 15 (spend 9 points)
+
+# function to calculate combinations ===========================================
+calculate_pointbuy_sets <- 
+  function(n_attributes = 6, min = 8, max = 15, points = 27, 
+           score_cost_df = pointbuy_costs_tbl) {
+    if (n_attributes <= 0) {stop("n_attributes must be a positive number")}
+    if (max <= min) {stop("max must be greater than min")}
+    if (!is.data.frame(score_cost_df) | 
+        !all(c("score", "cost") %in% colnames(score_cost_df))) {
+      stop("point_cost_df must be a data.frame with columns 'score' and 'cost'")
+    }
+    if (points < 0) {stop("points cannot be negative")}
+    if (all(score_cost_df$cost > points)) {
+      stop("all 'cost' values in score_cost_df > points")}
+    
+    base_attrs <- rep(min, n_attributes)
+    attr_list <- lapply(1:n_attributes, function(i) {min:max})
+    names(attr_list) <- as.character(1:n_attributes)
+    
+    # generate all possible combinations
+    attr_combos_df <- expand.grid(attr_list)
+    
+    # filter to unique combinations of distinct values
+    # (e.g. only 1 case of 'all attributes are '15' but one')
+    ordered_combos_vec <- vapply(1:nrow(attr_combos_df), function(i) {
+      set <- unlist(attr_combos_df[i,])[order(unlist(attr_combos_df[i,]))]
+      paste(set, collapse = "_")
+    }, character(1L))
+    
+    attr_combos_df$set_idx <- as.integer(factor(ordered_combos_vec))
+    rm(ordered_combos_vec)
+    
+    attr_combos_df <- 
+      attr_combos_df |> 
+      group_by(set_idx) |> 
+      mutate(entry = row_number()) |> 
+      ungroup() |> 
+      filter(entry == 1)
+    
+    # calculate 'point cost'
+    cost_vec <- score_cost_df$cost
+    names(cost_vec) <- score_cost_df$score
+    
+    attr_combos_df$tot_cost <- 
+      vapply(1:nrow(attr_combos_df), function(i) {
+        scores <- unlist(attr_combos_df[i, 1:n_attributes])
+        sum(cost_vec[as.character(scores)])
+      }, numeric(1L))
+    
+    # filter to only sets as close as possible to maximum 'point buy' (not over)
+    attr_combos_df$diff_vs_max <- 
+      attr_combos_df$tot_cost - points
+    
+    attr_combos_df <- 
+      attr_combos_df[attr_combos_df$tot_cost <= points, ]
+    
+    closest_diff <- 
+      attr_combos_df$diff_vs_max == min(abs(attr_combos_df$diff_vs_max))
+    
+    attr_combos_df <- 
+      attr_combos_df[closest_diff, 1:n_attributes]
+    
+    # final result
+    attr_combos_df
+  }
+
+pointbuy_combos_df <- 
+  calculate_pointbuy_sets(n_attributes = 6, min = 8, max = 15, points = 27,
+                          score_cost_df = pointbuy_costs_tbl) |> 
+  pivot_longer(cols = everything(), names_to = "ability", values_to = "score") |> 
+  mutate(mod = get_ability_mod(score))
+
+
+pointbuy_pct_df <- 
+  pointbuy_combos_df |> 
+  mutate(ability = factor(ability)) |> 
+  group_by(ability, mod) |> 
+  summarize(count = n(), .groups = "drop") |> 
+  group_by(ability) |> 
+  mutate(percent = count / sum(count) * 100) |> 
+  ungroup()
+
+
+(bar_plot_pointbuy <- 
+  ggplot(pointbuy_pct_df, aes(x = mod, y = percent)) +
+    facet_wrap(facets = vars(ability)) +
+    geom_bar(stat = "identity", linewidth = 1) +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    labs(title = "'Point-buying' method ability modifier possibilities",
+         x = "Ability modifier",
+         y = "Percent of simulations") +
+    scale_x_continuous(breaks = c(-3:4), minor_breaks = FALSE) +
+    theme_light())
+
+pointbuy_tbl <- 
+  pointbuy_pct_df |> 
+  mutate(percent = sprintf("%.1f", percent) |> as.numeric()) |> 
+  ungroup() |> 
+  select(-count) |> 
+  pivot_wider(names_from = ability, values_from = percent) |> 
+  arrange(desc(mod))
+```
+
+__Percentage (estimated probability) of each modifier per 'ability' slot__
+
+```{r pointbuy-tbl, result='asis'}
+pointbuy_tbl_ <- 
+  kbl(pointbuy_tbl, format = "html") |> 
+  column_spec(column = 1, bold = TRUE,
+              color = ifelse(unlist(pointbuy_tbl[, 1]) < 0, "red", "black")
+              )
+
+for (i in 1:6) {
+  pointbuy_tbl_ <-
+    pointbuy_tbl_ |> 
+    column_spec(column = i + 1, bold = FALSE, color = "black",
+                background = 
+                  spec_color(unlist(pointbuy_tbl[, i + 1]),
+                             begin = 0.1, end = 1)
+                )
+}
+
+pointbuy_tbl_ |> 
+  kable_styling(full_width = FALSE, 
+                bootstrap_options = c("striped", "bordered"))
+```
+
+
+## 'Homebrew' Approach
+
+The proposed 'homebrew' approach to generating character ability scores:
+
+- For the primary ability, roll eight 6-sided dice (8d6), drop the five lowest scores, and take the resulting sum as that ability's score  
+- For the secondary ability, roll six 6-sided dice (6d6), drop the three lowest scores, and take the resulting sum as that ability's score  
+- Apply the 'classic' approach (4d6, drop the lowest) for the remaining four ability scores  
+
+Here's the proportion of different ability scores from `r sim_length` simulations; ability '1' is just whichever ability score is highest, then '2', etc.
+
+```{r sim-eval-homebrew}
+# approach 3: 'home brew'
+# - for primary ability, roll 8d6 and take top 3
+# - for secondary, roll 6d6 and take top 3
+# - for all other stats, roll 4d6 and take top 3
+
+sim_rolls_homebrew_df <- 
+  lapply(1:sim_length, function(i) {
+    roll_set_6 <- 
+      roll(counts = c(8, 6, rep(4, 4)), 
+           sides = rep(6, 6), 
+           seed = i, 
+           drop.lowest.n = c(5, 3, rep(1, 4)))
+    
+    rslt <- 
+      data.frame(
+        sim = i,
+        ability = 1:6,
+        score = 
+          vapply(1:6, function(i) {
+            roll_set_6[[i]]$sum}, integer(1L)),
+        total = c(roll_set_6[[7]], rep(NA_integer_, 5))
+        )
+    
+    # abilities are assigned from the 'pool' of 6 results;
+    #   it makes sense to assume top scores go to highest-importance abilities
+    rslt$score <- rslt$score[rev(order(rslt$score))]
+    rslt$mod <- get_ability_mod(rslt$score)
+    
+    rslt
+  }) |> 
+  bind_rows()
+
+sim_rolls_homebrew_pct_df <- 
+  sim_rolls_homebrew_df |> 
+  mutate(ability = factor(ability)) |> 
+  group_by(ability, mod) |> 
+  summarize(count = n(), .groups = "drop") |> 
+  group_by(ability) |> 
+  mutate(percent = count / sum(count) * 100) |> 
+  ungroup()
+
+
+(bar_plot_homebrew <- 
+  ggplot(sim_rolls_homebrew_pct_df, aes(x = mod, y = percent)) +
+    facet_wrap(facets = vars(ability)) +
+    geom_bar(stat = "identity", linewidth = 1) +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    labs(title = "'Homebrew' method simulated ability modifier results",
+         x = "Ability modifier",
+         y = "Percent of simulations") +
+    scale_x_continuous(breaks = c(-3:4), minor_breaks = FALSE) +
+    theme_light())
+
+sim_rolls_homebrew_tbl <- 
+  sim_rolls_homebrew_pct_df |> 
+  mutate(percent = sprintf("%.1f", percent) |> as.numeric()) |> 
+  ungroup() |> 
+  select(-count) |> 
+  pivot_wider(names_from = ability, values_from = percent) |> 
+  arrange(desc(mod))
+
+# secondary analysis: how does roll total differ vs. the point-buy approach?
+sim_rolls_homebrew_totals_vec <- 
+  sim_rolls_homebrew_df$total[!is.na(sim_rolls_homebrew_df$total)]
+
+diff_vs_pointbuy_homebrew_vec <- sim_rolls_homebrew_totals_vec - (6 * 8 + 27)
+```
+
+__Percentage (estimated probability) of each modifier per 'ability' slot__
+
+```{r sim-homebrew-tbl, result='asis'}
+sim_rolls_homebrew_tbl_ <- 
+  kbl(sim_rolls_homebrew_tbl, format = "html") |> 
+  column_spec(column = 1, bold = TRUE,
+              color = ifelse(unlist(sim_rolls_homebrew_tbl[, 1]) < 0, "red", "black")
+              )
+
+for (i in 1:6) {
+  sim_rolls_homebrew_tbl_ <-
+    sim_rolls_homebrew_tbl_ |> 
+    column_spec(column = i + 1, bold = FALSE, color = "black",
+                background = 
+                  spec_color(unlist(sim_rolls_homebrew_tbl[, i + 1]),
+                             begin = 0.1, end = 1)
+                )
+}
+
+sim_rolls_homebrew_tbl_ |> 
+  kable_styling(full_width = FALSE, 
+                bootstrap_options = c("striped", "bordered"))
+```
+
+## Comparisons vs. 'Point-buying'
+
+Under the 'point-buying' approach, there are $6 \cdot 8 + 27 = 75$ total points available for allocating (with a 'floor' of ability scores of 8); here's how the simulated roll approaches above compare.
+
+```{r modifier-comparisons}
+pointbuy_comparison_df <- 
+  data.frame(
+  approach = rep(c("classic", "homebrew"), 
+                 times = c(length(diff_vs_pointbuy_classic_vec),
+                           length(diff_vs_pointbuy_homebrew_vec))),
+  diff_vs_pointbuy = 
+    c(diff_vs_pointbuy_classic_vec, diff_vs_pointbuy_homebrew_vec)
+  ) |> 
+  group_by(approach, diff_vs_pointbuy) |> 
+  summarize(count = n(), .groups = "drop") |> 
+  group_by(approach) |> 
+  mutate(percent = count / sum(count) * 100) |> 
+  ungroup()
+
+ggplot(pointbuy_comparison_df, aes(x = diff_vs_pointbuy, y = percent)) +
+  facet_wrap(facets = vars(approach)) +
+  geom_bar(stat = "identity", linewidth = 1) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 1) +
+  labs(title = "Comparison of total ability score points vs. point-buying (vertical line)",
+       x = "Ability score points vs. point-buying approach (75)",
+       y = "Percent",
+       caption = paste(
+         paste0("% > point-buying (classic): ", 
+                sprintf("%.1f", 
+                        mean(diff_vs_pointbuy_classic_vec > 0) * 100), "%"),
+         paste0("; % > point-buying (homebrew): ", 
+                sprintf("%.1f", 
+                        mean(diff_vs_pointbuy_homebrew_vec > 0) * 100), "%")
+         )) +
+  theme_light()
+```
+
+
+# Ability Score Analyses
+
+For those curious, here's how the _ability scores_ shake out from the simulation coded above. The score-generating approaches are repeated for reference.
+
+## Classic Approach
+
+The 'classic' approach to generating character ability scores:
+
+- Roll four 6-sided die (4d6)  
+- Drop the lowest score and sum the remaining three  
+- Repeat this process five more times to get your six ability scores, then allocate as you see fit 
+
+Here's the proportion of different ability scores from `r sim_length` simulations; ability '1' is just whichever ability score is highest, then '2', etc.
+
+```{r classic-score-eval}
+sim_rolls_classic_pct_df_2 <- 
+  sim_rolls_classic_df |> 
+  mutate(ability = factor(ability)) |> 
+  group_by(ability, score) |> 
+  summarize(count = n(), .groups = "drop") |> 
+  group_by(ability) |> 
+  mutate(percent = count / sum(count) * 100) |> 
+  ungroup()
+
+
+(bar_plot_classic_2 <- 
+  ggplot(sim_rolls_classic_pct_df_2, aes(x = score, y = percent)) +
+    facet_wrap(facets = vars(ability)) +
+    geom_bar(stat = "identity", linewidth = 1) +
+    geom_vline(xintercept = 8, linetype = "dashed") +
+    scale_x_continuous(breaks = c(3:8, seq(10, 18, 2)), minor_breaks = FALSE) +
+    theme_light())
+
+sim_rolls_classic_tbl_2 <- 
+  sim_rolls_classic_pct_df_2 |> 
+  mutate(percent = sprintf("%.1f", percent) |> as.numeric()) |> 
+  ungroup() |> 
+  select(-count) |> 
+  pivot_wider(names_from = ability, values_from = percent) |> 
+  arrange(desc(score))
+```
+
+__Percentage (estimated probability) of each score per 'ability' slot__
+
+```{r sim-classic-tbl-2, result='asis'}
+sim_rolls_classic_tbl_2_ <- 
+  kbl(sim_rolls_classic_tbl_2, format = "html") |> 
+  column_spec(column = 1, bold = TRUE,
+              color = ifelse(unlist(sim_rolls_classic_tbl_2[, 1]) < 0, "red", "black")
+              )
+
+for (i in 1:6) {
+  sim_rolls_classic_tbl_2_ <-
+    sim_rolls_classic_tbl_2_ |> 
+    column_spec(column = i + 1, bold = FALSE, color = "black",
+                background = 
+                  spec_color(unlist(sim_rolls_classic_tbl_2[, i + 1]),
+                             begin = 0.1, end = 1)
+                )
+}
+
+sim_rolls_classic_tbl_2_ |> 
+  kable_styling(full_width = FALSE, 
+                bootstrap_options = c("striped", "bordered"))
+```
+
+
+## 'Point-buying' Approach
+
+```{r sim-eval-pointbuy-2}
+pointbuy_pct_df_2 <- 
+  pointbuy_combos_df |> 
+  mutate(ability = factor(ability)) |> 
+  group_by(ability, score) |> 
+  summarize(count = n(), .groups = "drop") |> 
+  group_by(ability) |> 
+  mutate(percent = count / sum(count) * 100) |> 
+  ungroup()
+
+
+(bar_plot_pointbuy <- 
+  ggplot(pointbuy_pct_df_2, aes(x = score, y = percent)) +
+    facet_wrap(facets = vars(ability)) +
+    geom_bar(stat = "identity", linewidth = 1) +
+    geom_vline(xintercept = 8, linetype = "dashed") +
+    labs(title = "'Point-buying' method ability score possibilities",
+         x = "Ability score",
+         y = "Percent of simulations") +
+    scale_x_continuous(breaks = c(3:8, seq(10, 18, 2)), minor_breaks = FALSE) +
+    theme_light())
+
+pointbuy_tbl_2 <- 
+  pointbuy_pct_df_2 |> 
+  mutate(percent = sprintf("%.1f", percent) |> as.numeric()) |> 
+  ungroup() |> 
+  select(-count) |> 
+  pivot_wider(names_from = ability, values_from = percent) |> 
+  arrange(desc(score))
+```
+
+__Percentage (estimated probability) of each modifier per 'ability' slot__
+
+```{r pointbuy-tbl-2, result='asis'}
+pointbuy_tbl_2_ <- 
+  kbl(pointbuy_tbl_2, format = "html") |> 
+  column_spec(column = 1, bold = TRUE,
+              color = ifelse(unlist(pointbuy_tbl_2[, 1]) < 0, "red", "black")
+              )
+
+for (i in 1:6) {
+  pointbuy_tbl_2_ <-
+    pointbuy_tbl_2_ |> 
+    column_spec(column = i + 1, bold = FALSE, color = "black",
+                background = 
+                  spec_color(unlist(pointbuy_tbl_2[, i + 1]),
+                             begin = 0.1, end = 1)
+                )
+}
+
+pointbuy_tbl_2_ |> 
+  kable_styling(full_width = FALSE, 
+                bootstrap_options = c("striped", "bordered"))
+```
+
+
+## 'Homebrew' Approach
+
+The proposed 'homebrew' approach to generating character ability scores:
+
+- For the primary ability, roll eight 6-sided dice (8d6), drop the five lowest scores, and take the resulting sum as that ability's score  
+- For the secondary ability, roll six 6-sided dice (6d6), drop the three lowest scores, and take the resulting sum as that ability's score  
+- Apply the 'classic' approach (4d6, drop the lowest) for the remaining four ability scores  
+
+Here's the proportion of different ability scores from `r sim_length` simulations; ability '1' is just whichever ability score is highest, then '2', etc.
+
+```{r sim-eval-homebrew-2}
+sim_rolls_homebrew_pct_df_2 <- 
+  sim_rolls_homebrew_df |> 
+  mutate(ability = factor(ability)) |> 
+  group_by(ability, score) |> 
+  summarize(count = n(), .groups = "drop") |> 
+  group_by(ability) |> 
+  mutate(percent = count / sum(count) * 100) |> 
+  ungroup()
+
+
+(bar_plot_homebrew_2 <- 
+  ggplot(sim_rolls_homebrew_pct_df_2, aes(x = score, y = percent)) +
+    facet_wrap(facets = vars(ability)) +
+    geom_bar(stat = "identity", linewidth = 1) +
+    geom_vline(xintercept = 8, linetype = "dashed") +
+    labs(title = "'Homebrew' method simulated ability score results",
+         x = "Ability score",
+         y = "Percent of simulations") +
+    scale_x_continuous(breaks = c(3:8, seq(10, 18, 2)), minor_breaks = FALSE) +
+    theme_light())
+
+sim_rolls_homebrew_tbl_2 <- 
+  sim_rolls_homebrew_pct_df_2 |> 
+  mutate(percent = sprintf("%.1f", percent) |> as.numeric()) |> 
+  ungroup() |> 
+  select(-count) |> 
+  pivot_wider(names_from = ability, values_from = percent) |> 
+  arrange(desc(score))
+```
+
+__Percentage (estimated probability) of each modifier per 'ability' slot__
+
+```{r sim-homebrew-tbl-2, result='asis'}
+sim_rolls_homebrew_tbl_2_ <- 
+  kbl(sim_rolls_homebrew_tbl_2, format = "html") |> 
+  column_spec(column = 1, bold = TRUE,
+              color = ifelse(unlist(sim_rolls_homebrew_tbl_2[, 1]) < 0, "red", "black")
+              )
+
+for (i in 1:6) {
+  sim_rolls_homebrew_tbl_2_ <-
+    sim_rolls_homebrew_tbl_2_ |> 
+    column_spec(column = i + 1, bold = FALSE, color = "black",
+                background = 
+                  spec_color(unlist(sim_rolls_homebrew_tbl_2[, i + 1]),
+                             begin = 0.1, end = 1)
+                )
+}
+
+sim_rolls_homebrew_tbl_2_ |> 
+  kable_styling(full_width = FALSE, 
+                bootstrap_options = c("striped", "bordered"))
+```
+
