@@ -10,36 +10,28 @@ output:
       collapsed: true
       smooth_scroll: false
     number_sections: true
-    highlight: tango
+    theme: paper
+    highlight: haddock
     code_folding: hide
-    theme: united
 ---
 
-```{css, echo=FALSE}
-<style type="text/css">
-  
-  body{
-  font-size: 12pt;
-  background-color:lightblue;
-  }
-  
-  code.r{
-  font-size: 11pt;
-  }
-  
-  pre {
-  font-size: 14pt
-  
-}
+<style>
+    body { font-size: 15px; background-color: #D1EEEE; }
+    h1, h2, h3, h4 { color: black; }
+    li { color: black; }
+    li::marker { color: navy; }
+    p { color: black; }
+    code.r { font-size: 14px; }
+    pre { font-size: 13px; }
 </style>
-```
+
 
 ```{r setup, include=TRUE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r pkg-load}
-pkgs <- c("pwr", "dplyr", "ggplot2", "tidyr")
+pkgs <- c("pwr", "dplyr", "ggplot2", "tidyr", "knitr", "kableExtra")
 for (i in seq_along(pkgs)) {library(pkgs[i], character.only = TRUE)}
 ```
 
@@ -47,13 +39,42 @@ for (i in seq_along(pkgs)) {library(pkgs[i], character.only = TRUE)}
 # DnD character generation option: roll 4d6, take the top 3
 # simulating to check distribution of that approach
 
-roll <- function(counts, sides, seed = NULL, drop.lowest = FALSE, lowest.n = 1) {
+# function to simulate dice rolls ==============================================
+# inputs:
+# - counts: vector for number of rolls
+# - sides: vector of sides per die (aligned with counts)
+# - seed: number to set random number generator seed for replication
+#     default (NULL) sets no RNG seed
+# - drop.lowest.n: vector to specify if dropping the lowest 'n' results
+#     default (NULL) will drop none for any roll
+#     a single number will apply that number to any roll
+#     a vector of 
+# output:
+# - list with 1 entry per roll set; each entry has the final rolls
+#     (excluding any lowest dropped rolls if specified) and sum of the set
+#     the final list entry is the sum across all roll sets
+roll <- function(counts, sides, seed = NULL, drop.lowest.n = NULL) {
   if (length(counts) != length(sides)) {stop("counts and sides lengths don't match")}
   if (!all(sides %in% c(4, 6, 8, 10, 100, 12, 20))) {
     stop("sides can only contain 4, 6, 8, 10, 100 (%), 12, 20")}
   set.seed(seed)
   pct_idx <- sides == 100
   
+  if (is.null(drop.lowest.n)){d.l.n <- rep(0, length(counts))
+  } else {
+    if (any(drop.lowest.n >= counts)) {stop("drop.lowest.n must be at most counts - 1")}
+    if (length(drop.lowest.n) == 1L) {d.l.n <- rep(drop.lowest.n, length(counts))
+    } else {
+      if (length(drop.lowest.n) != length(counts)) {
+        stop("drop.lowest.n must be one of: same length as counts, a single number, or NULL")
+      }
+      d.l.n <- drop.lowest.n
+      }
+  }
+  
+  # check feasibility of dropping lowest 'n' rolls in each case
+  if (any(d.l.n < 0)) {stop("drop.lowest.n cannot be negative")}
+
   roll_set <- 
     lapply(1:length(sides), function(i) {
       if (pct_idx[i]) {
@@ -62,74 +83,49 @@ roll <- function(counts, sides, seed = NULL, drop.lowest = FALSE, lowest.n = 1) 
         rslt <- tens + ones
         rslt[rslt == 0] <- 100
         
-        if (drop.lowest) {rslt <- (rslt[order(rslt)])[-c(1:lowest.n)]}
-        rslt <- list(rslt)
-        names(rslt) <- paste0(counts[i], "d%")
+        if (d.l.n[i] > 0) {rslt <- (rslt[order(rslt)])[-c(1:d.l.n[i])]}
+        rslt <- list("rolls" = rslt, "sum" = sum(rslt))
         rslt
       } else {
         rslt <- sample(1:sides[i], size = counts[i], replace = TRUE)
-        if (drop.lowest) {rslt <- (rslt[order(rslt)])[-c(1:lowest.n)]}
-        rslt <- list(rslt)
-        names(rslt) <- paste0(counts[i], "d", sides[i])
+        if (d.l.n[i] > 0) {rslt <- (rslt[order(rslt)])[-c(1:d.l.n[i])]}
+        rslt <- list("rolls" = rslt, "sum" = sum(rslt))
         rslt
         }
       })
   
-  roll_set[[length(roll_set) + 1]] <- c("total" = sum(unlist(roll_set)))
+  names(roll_set) <- paste0(counts, "d", ifelse(pct_idx, "%", sides))
+  sums <- 
+    vapply(seq_along(roll_set), function(i){roll_set[[i]]$sum}, numeric(1L)) 
+  
+  roll_set[[length(roll_set) + 1]] <- c("ovr total" = sum(sums))
   
   roll_set
 }
 
-#x <- 
-data.frame(setup = c("3d4 - 2 vs. 1d10"),
-           sim_seed = 1:1e4) %>% 
-  mutate(
-    results = lapply(1:nrow(.), function(i){
-      roll(counts = c(3, 1), sides = c(4, 10), seed = .$sim_seed[i])
-    })
-  ) %>% 
-  mutate(
-    res_3d4mns2 = vapply(1:nrow(.), function(i) {
-      sum(.$results[[i]][[1]]$`3d4`) - 2}, numeric(1L)),
-    res_1d10 = vapply(1:nrow(.), function(i) {
-      .$results[[i]][[2]]$`1d10`}, numeric(1L)),
-  ) %>% 
-  pivot_longer(cols = starts_with("res_"),
-               names_to = "roll", names_prefix = "res_",
-               values_to = "result") %>% 
-  ggplot(aes(x = result, color = roll)) +
-  geom_density()
-
-# set.seed(42)
-# sim_set <- vector("integer", 1e5)
-# for (i in seq_along(sim_set)) {
-#   sim_set[i] <- 
-#     `[[`(
-#       unlist(
-#         roll(counts = 4, sides = 6, seed = i, drop.lowest = TRUE, lowest.n = 1), 
-#         recursive = FALSE), 
-#       "total")
-# }
-# 
-# hist(sim_set)
-# summary(sim_set) 
-# 
-# data.frame(result = c("< 7", "7-8", "9-10", "11-12", "13-14", 15:18)) %>% 
+# just curious: impact of 3d4 minus 2 versus 1d10 (same min/max)
+# data.frame(setup = c("3d4 - 2 vs. 1d10"),
+#            sim_seed = 1:1e4) %>%
 #   mutate(
-#     prob = vapply(1:nrow(.), 
-#                   function(i) {
-#                     100 * 
-#                     if (result[i] == "< 7") {mean(sim_set < 7)
-#                     } else if (result[i] == "7-8") {mean(sim_set %in% 7:8)
-#                     } else if (result[i] == "9-10") {mean(sim_set %in% 9:10)
-#                     } else if (result[i] == "11-12") {mean(sim_set %in% 11:12)
-#                     } else if (result[i] == "13-14") {mean(sim_set %in% 13:14)
-#                     } else {mean(sim_set == as.numeric(result[i]))}
-#                   }, numeric(1L)),
-#     cumulative_prob = cumsum(prob),
-#     prob = sprintf("%.1f", prob)
-#     )
+#     results = lapply(1:nrow(.), function(i){
+#       roll(counts = c(3, 1), sides = c(4, 10), seed = .$sim_seed[i])
+#     })
+#   ) %>%
+#   mutate(
+#     res_3d4mns2 = vapply(1:nrow(.), function(i) {
+#       .$results[[i]]$`3d4`$sum - 2}, numeric(1L)),
+#     res_1d10 = vapply(1:nrow(.), function(i) {
+#       .$results[[i]]$`1d10`$sum}, numeric(1L)),
+#   ) %>%
+#   pivot_longer(cols = starts_with("res_"),
+#                names_to = "roll", names_prefix = "res_",
+#                values_to = "result") %>%
+#   ggplot(aes(x = result, color = roll)) +
+#   geom_density() +
+#   scale_x_continuous(breaks = 1:10, minor_breaks = FALSE)
 
+# unsurprising - 3d4 - 2 concentrates results closer to center of results range
+# (esp. 4-7); 1d10 is more 'swingy'
 ```
 
 
@@ -146,7 +142,7 @@ data.frame(setup = c("3d4 - 2 vs. 1d10"),
 
 - 'grey': Chessex 'speckled granite' 7-die set (CHX 25320); white 'core' composition with extensive darker grey flecks and some lighter grey flecks, and 'blood-red' numbering  
     - urea  
-    - _retired from use due to the mottled grey/dark red color scheme being hard to read unless under very bright light; re-inking didn't help_  
+    - _retired from use due to the mottled grey/dark red color scheme being hard to read unless under very bright light; re-inking while trying to keep reddish numbering didn't help_  
 
 - 'black': Chessex 'speckled urban camo' 7-die set (CHX 25328); dark grey 'core' composition with extensive black flecks and yellow numbering  
     - urea  
@@ -168,9 +164,9 @@ data.frame(setup = c("3d4 - 2 vs. 1d10"),
 
 # Rolling Surface  
 
-- Most rolls (white, grey, black, most green rolls):  FanRoll velvet dice tray with leather backing ('rainbow watercolor'); 10" x 10" dimensions, moderate padding  
+- Initial rolls (white, grey, black, most green rolls):  FanRoll velvet dice tray with leather backing ('rainbow watercolor'); 10" x 10" dimensions, moderate padding  
 
-- Later rolls (rest of green, teal[1/2], mushroom, aubergine, ocean rolls): GameGenic Tokens' Lair magnetic dice tray; 6.5" x 3.75" dimensions, slight padding
+- Later rolls (rest of green, teal[1/2], mushroom, aubergine, ocean rolls): GameGenic Tokens' Lair magnetic dice tray; 6.5" x 3.75" dimensions, less padding
 
 # Power Analysis to Determine Sample Size to Vet Dice
 
@@ -197,11 +193,10 @@ dice_setup <-
   filter(!((grepl("teal", set) | grepl("mushroom", set)) & 
            die %in% paste0("d", c(4, 6, 8, 10, "%", 12)))) %>% 
   mutate(
-    sides = if_else(
-      grepl("\\%", die), 10,
-      sub("d", "", die) %>% as.numeric()
-    ),
+    sides_char = ifelse(grepl("\\%", die), 10, sub("d", "", die)),
+    sides = as.numeric(sides_char)
   ) %>% 
+  select(-sides_char) %>% 
   # note: need separate mutate() calls when the previous mutate-created 
   #       content is needed to create subsequent multi-step entry 
   mutate(
@@ -283,7 +278,7 @@ plot_result <- function(df, fill_color = "dodgerblue2") {
 
 
 set_fill_map <- 
-  c("white" = "firebrick", "grey" = "grey40", 
+  c("white" = "ivory3", "grey" = "grey40", 
     "black" = "grey10", "green" = "green4",
     "teal1" = "darkcyan", "teal2" = "steelblue4",
     "mushroom" = "gold3", "aubergine" = "#614051",
@@ -3201,7 +3196,7 @@ plot_result(ocn_d20_df, set_fill_map["ocean"])
 ```
 
 
-
+# Aggregated Analyses
 
 ```{r simulation-dp, echo = FALSE, eval = TRUE}
 # merging the datasets
@@ -3294,6 +3289,8 @@ dice_roll_df_ <-
     )
 ```
 
+## 'Fairest' and 'Least Fair'
+
 ```{r fairest-dice}
 # checking which dice per side across sets have largest p-values
 fairest_dice_top3 <- 
@@ -3318,22 +3315,43 @@ fairest_dice_bot2 <-
   select(set, die, chisq_pval, p_val_rank) %>% 
   arrange(die, desc(p_val_rank), set)
 
-fairest_dice_top3
+# table formatting
+format_table <- function(x){
+  x |> 
+  kbl(format = "html") |>
+  kable_styling(full_width = FALSE, 
+                bootstrap_options = c("striped", "bordered"))
+}
 
+noquote("Fairest Dice")
+fairest_dice_top3 |> 
+  mutate(chisq_pval = round(chisq_pval, 3)) |> 
+  format_table()
+  
+noquote("Fairest Dice - Sets by # Appearances and Average Ranking in Top 3")
 fairest_dice_top3 |> 
   group_by(set) |> 
   summarize(top3_ct = n(), 
-            avg_rank = mean(p_val_rank), 
+            avg_rank = mean(p_val_rank) |> round(3), 
             .groups = "drop") |> 
-  arrange(desc(top3_ct), avg_rank)
+  arrange(desc(top3_ct), avg_rank) |> 
+  format_table()
+  
 # grey, then aubergine, then black, then white, then green 
 # (descending order of 'fairness')
 # aside from d20s, no real concerns of fairness for any observations
 # aubergine d20 is astonishingly 'fair'!
 
-fairest_dice_bot2
+noquote("Least Fair Dice")
+fairest_dice_bot2 |> 
+  mutate(chisq_pval = round(chisq_pval, 3)) |>
+  format_table()
 
-fairest_dice_bot2 |> arrange(chisq_pval)
+noquote("Least Fair Dice, Arranged by p-value")
+fairest_dice_bot2 |> 
+  arrange(chisq_pval) |> 
+  mutate(chisq_pval = round(chisq_pval, 3)) |>
+  format_table()
 # green d20 is clearly not random, nor is white d20
 # for other-sided dice even the 'worst' performers are solid except 
 # 'ocean' d12 ... expected value (6.3) isn't wildly off 'random' EV (6.5)
@@ -3341,8 +3359,9 @@ fairest_dice_bot2 |> arrange(chisq_pval)
 #   just more 3s than 1s 
 ```
 
+## Mean and SD of Observed Rolls
 
-```{r dice-eval-plots}
+```{r mean-sd-plots}
 # observed vs. expected mean / SD
 dice_mean_df_tbl <- 
   dice_roll_df_ %>% 
@@ -3395,10 +3414,23 @@ focus_mean_sd_plots <-
     )
   ) %>% 
   pull(plot_)
-
-mean_sd_by_set_plots
-focus_mean_sd_plots
 ```
+
+```{r outpt-mean-sd-plots, results='asis'}
+for (i in seq_along(mean_sd_by_set_plots)) {
+  if (i == 1) {cat("All Mean/SD Plots\n\n")}
+  cat("\n\n")
+  print(mean_sd_by_set_plots[[i]])
+}
+
+for (i in seq_along(focus_mean_sd_plots)) {
+  if (i == 1) {cat("10+% difference Mean/SD Plots\n\n")}
+  cat("\n\n")
+  print(focus_mean_sd_plots[[i]])
+}
+```
+
+## Roll Streaks
 
 ```{r streak-analysis}
 streak_color_map <- 
@@ -3424,7 +3456,7 @@ dice_streaks_plots <-
 
 streak_sim <- 
   lapply(1:100, function(i) {
-    roll_sim <- roll(counts = 1851, sides = 20, seed = i)[[1]][[1]]
+    roll_sim <- roll(counts = 1851, sides = 20, seed = i)[[1]]$rolls
     rle_ <- find_run_lengths(roll_sim, streaks.only = TRUE)
     rle_
   }) %>% 
@@ -3441,18 +3473,38 @@ streak_sim_plot <-
   ggplot(streak_sim_df, aes(x = value, y = count, fill = strk_len)) +
   geom_col(position = position_dodge(width = 0.7)) +
   labs(title = "Streak length by value",
-       subtitle = "Simulated d20 rolls") +
+       subtitle = "Simulated d20 rolls",
+       caption = "1,851 rolls simulated 100 times") +
   scale_fill_manual(values = streak_color_map) +
   theme_bw()
 
 dice_streak_focus <- c(7, 14, 21, 28, 29, 30, 31, 38, 40, 45)
-lapply(seq_along(dice_streak_focus), function(i){
-  dice_streaks_plots[[dice_streak_focus[i]]]
-  })
-streak_sim_plot
+
+focused_streak_plots <- 
+  lapply(seq_along(dice_streak_focus), function(i){
+    dice_streaks_plots[[dice_streak_focus[i]]]
+    })
 ```
 
-```{r comparison-stat-sig, fig.width=10, fig.height=4}
+```{r output-dice-streak-plots, results='asis'}
+cat("\n\nSimulated d20 rolls for comparison\n\n")
+
+print(streak_sim_plot)
+
+cat("\n\nSelected Streak Plots\n\n")
+
+for (i in seq_along(focused_streak_plots)) {
+  cat("\n\n")
+  print(focused_streak_plots[[i]])
+}
+```
+
+
+## Observed vs. Expected for Stat. Sig. Dice
+
+*Note: The 'aubergine' d20 is (amazingly) **not** statistically significant; it's included for comparison against the other d20s, all of which were stat. sig. in the chi-squared test.*
+
+```{r comparison-stat-sig}
 # plots of (Chi square HoV) stat-sig dice - side-by-side for same-die sets
 comparison_plots_df <- 
   dice_roll_df_ %>%
@@ -3491,14 +3543,27 @@ comparison_plots <-
       scale_fill_manual(values = set_fill_map) +
       theme_bw()
   })
-
-comparison_plots
 ```
+
+```{r output-comparison-stats-sig, results='asis', fig.width=10, fig.height=4}
+for (i in 1:(length(comparison_plots) - 1)) {
+  cat("\n\n")
+  print(comparison_plots[[i]])
+}
+```
+
+```{r output-comparison-d20, fig.width=12, fig.height=5}
+cat("\n\n")
+print(comparison_plots[[length(comparison_plots)]])
+```
+
+
+## Checking Stat. Sig. d20 Results If Collecting Smaller Samples
 
 ```{r d20-chisq-sim, eval = FALSE}
 # simulating p-values from subsampling observed rolls - checking if
 #  stat. sig. p-vals are more a result of large sample size
-boot_chisq_pval <- 
+sample_chisq_pval <- 
   function(data, subset_var, value_var, nsim = 1e4, n = 500, seed = 42) {
     p_val_vec <- vector("numeric", nsim)
     
@@ -3533,7 +3598,7 @@ boot_chisq_pval <-
 
 
 d20_sample_sim_n1000 <- 
-  boot_chisq_pval(
+  sample_chisq_pval(
     data = dice_roll_df[dice_roll_df$die == "d20", c("set", "result")],
     subset_var = "set",
     value_var = "result",
@@ -3541,7 +3606,7 @@ d20_sample_sim_n1000 <-
   )
 
 d20_sample_sim_n750 <- 
-  boot_chisq_pval(
+  sample_chisq_pval(
     data = dice_roll_df[dice_roll_df$die == "d20", c("set", "result")],
     subset_var = "set",
     value_var = "result",
@@ -3549,7 +3614,7 @@ d20_sample_sim_n750 <-
   )
 
 d20_sample_sim_n500 <- 
-  boot_chisq_pval(
+  sample_chisq_pval(
     data = dice_roll_df[dice_roll_df$die == "d20", c("set", "result")],
     subset_var = "set",
     value_var = "result",
@@ -3599,7 +3664,7 @@ write.csv(x = d20_sample_sim_df,
           row.names = FALSE)
 ```
 
-```{r d20-chisq-sim-viz}
+```{r d20-chisq-sim-viz, fig.width = 9, fig.height = 8}
 d20_sample_sim_df <- 
   read.csv("d20_sample_sim.csv")
 
@@ -3637,6 +3702,9 @@ d20_sample_sim_df |>
         axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
 ```
 
+## Bayesian Multinomial Analysis (d20)
+
+### Analysis and Posterior Probability Density
 
 ```{r bayesian-multinomial-proportions, fig.width = 9, fig.height = 8}
 # brms note for Dirichlet model:
@@ -3709,7 +3777,9 @@ d20_bayesian_pcts_plot <-
 d20_bayesian_pcts_plot
 ```
 
-```{r bayesian-multinomial-credint, fig.height = 8}
+### Credible Intervals from Posterior Probabilities
+
+```{r bayesian-multinomial-credint, fig.width = 9, fig.height = 8}
 d20_bayesian_credint_df <- 
   d20_bayesian_pcts_df |> 
   group_by(set, side) |> 
@@ -3737,8 +3807,9 @@ d20_bayesian_credint_df |>
              color = set)) + 
   facet_wrap(facets = vars(side), ncol = 4) +
   geom_hline(yintercept = 1 / 20, linetype = "dashed") +
-  geom_pointrange() +
+  geom_pointrange(linewidth = 1) +
   labs(title = "d20 95% Credible Intervals with Median by Set and Side",
+       y = "Posterior Probability (%)",
        caption = "Reference line at 5%") +
   scale_y_continuous(labels = scales::percent) +
   scale_color_manual(values = set_fill_map) +
@@ -3746,7 +3817,9 @@ d20_bayesian_credint_df |>
   theme(axis.text.x = element_text(angle = 40, hjust = 1, vjust = 1))
 ```
 
-```{r bayesian-multinomial-1vs20}
+### Credible Interval Zoom-in: Rolling 1 vs 20, and 'Low' vs. 'High' Results
+
+```{r bayesian-multinomial-1vs20, fig.width = 9, fig.height = 8}
 # deep dive: posterior probability 1 vs. 20
 d20_bayesian_credint_df |> 
   filter(side %in% c("1", "20")) |>
@@ -3754,12 +3827,13 @@ d20_bayesian_credint_df |>
              ymin = credint_pct2.5, y = credint_pct50, ymax = credint_pct97.5,
              color = set, group = side)) +
   geom_hline(yintercept = 1 / 20, linetype = "dashed") +
-  geom_pointrange(fatten = 10, shape = 22, fill = "white", 
+  geom_pointrange(fatten = 10, shape = 22, linewidth = 1, fill = "white", 
                   position = position_dodge(width = 0.5)) +
   geom_text(aes(label = side), size = 3, color = "black",
             position = position_dodge(width = 0.5), vjust = 0.5) +
   labs(title = "d20 95% Credible Intervals with Median by Set and Side",
        subtitle = "Zoom in for P(1) and P(20)",
+       y = "Posterior Probability (%)",
        caption = "Reference line at 5%") +
   scale_y_continuous(labels = scales::percent) +
   scale_color_manual(values = set_fill_map, guide = "none") +
@@ -3806,10 +3880,11 @@ d20_bayesian_lohi_df |>
              ymin = credint_pct2.5, y = credint_pct50, ymax = credint_pct97.5,
              color = set, shape = grp)) +
   geom_hline(yintercept = btm_top / 20, linetype = "dashed") +
-  geom_pointrange(fatten = 5, fill = "white", 
+  geom_pointrange(fatten = 5, linewidth = 1, fill = "white", 
                   position = position_dodge(width = 0.5)) +
   labs(title = "d20 95% Credible Intervals with Median by Set and Side",
        subtitle = paste("Zoom in for lowest and highest", btm_top, "sides"),
+       y = "Posterior Probability (%)",
        caption = paste("Reference line at", paste0(btm_top / 20 * 100, "%")),
        shape = NULL) +
   scale_y_continuous(labels = scales::percent) +
