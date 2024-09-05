@@ -4351,7 +4351,11 @@ d20_bayesian_lohi_df |>
 
 ### Median Posterior Probability of (d20 side) by Set
 
-```{r median-post-prob-viz}
+__Dynamic Shiny app__
+
+_Note: this was an experiment in embedding a Shiny app in an R Markdown file; the HTML file needs to be rendered locally from the .Rmd file for this to work._
+
+```{r median-post-prob-viz-shiny}
 # Shiny app radar plot for median posterior probability of sides per d20
 shinyApp(
 
@@ -4422,3 +4426,53 @@ shinyApp(
 )
 
 ```
+
+__Static Plots__
+
+```{r median-post-prob-viz-static, results='asis'}
+mdn_post_prob_plts <- 
+  lapply(seq_along(set_d20_ranks), function(i) {
+    median_prob_df <- 
+      d20_bayesian_pcts_df |> 
+      group_by(die, set, side) |> 
+      summarize(median_post_prob = median(value), .groups = "drop")
+    
+    sorted_side_order <- 
+      median_prob_df |> 
+      filter(set == set_d20_ranks[i]) |>
+      group_by(side) |> 
+      summarize(mean_medn_prob = mean(median_post_prob), 
+                .groups = "drop") |> 
+      mutate(side = as.integer(side)) |> 
+      arrange(desc(mean_medn_prob)) |> 
+      pull(side)
+    
+    medn_prob_df <- 
+      mutate(median_prob_df, side = factor(side, levels = sorted_side_order))
+      
+    emph_prob_df <-  
+      median_prob_df |> 
+      filter(set == set_d20_ranks[i]) |> 
+      mutate(side = factor(side, levels = sorted_side_order))
+    
+    ggplot(data = emph_prob_df, aes(x = side, y = median_post_prob, color = set, group = set)) +
+        geom_hline(yintercept = 1 / 20, linetype = "dashed") +
+        geom_line(data = medn_prob_df, color = "grey") +
+        geom_point(data = medn_prob_df, color = "grey") +
+        geom_line(data = emph_prob_df, linewidth = 1) +
+        geom_point(data = emph_prob_df, size = 3) +
+        labs(title = "Radar-like Plot of Median Posterior Probability of (side)",
+             subtitle = "All d20 in grey, selected set in color",
+             x = NULL, y = NULL, color = NULL,
+             caption = "Reference line at 5%") +
+        scale_y_continuous(labels = scales::percent) +
+        scale_color_manual(values = set_fill_map) +
+        theme_bw() +
+        coord_polar()
+  })
+
+for (i in seq_along(mdn_post_prob_plts)) {
+  print(mdn_post_prob_plts[[i]])
+}
+```
+
