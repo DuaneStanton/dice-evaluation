@@ -13,7 +13,6 @@ output:
     theme: paper
     highlight: haddock
     code_folding: hide
-runtime: shiny
 ---
 
 <style>
@@ -4353,7 +4352,7 @@ d20_bayesian_lohi_df |>
 
 __Dynamic Shiny app__
 
-_Note: this was an experiment in embedding a Shiny app in an R Markdown file; the HTML file needs to be rendered locally from the .Rmd file for this to work._
+_Note: this was an experiment in embedding a Shiny app in an R Markdown file; the HTML file needs to be rendered locally from the .Rmd file for this to work. IF DOING THIS, ADD 'runtime: shiny' AT THE LAST LINE OF THE .RMD YAML HEADER_
 
 ```{r median-post-prob-viz-shiny}
 # Shiny app radar plot for median posterior probability of sides per d20
