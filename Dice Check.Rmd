@@ -13,6 +13,7 @@ output:
     theme: paper
     highlight: haddock
     code_folding: hide
+runtime: shiny
 ---
 
 <style>
@@ -31,7 +32,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r pkg-load}
-pkgs <- c("pwr", "dplyr", "ggplot2", "tidyr", "knitr", "kableExtra")
+pkgs <- c("pwr", "dplyr", "ggplot2", "tidyr", "knitr", "kableExtra", "shiny")
 for (i in seq_along(pkgs)) {library(pkgs[i], character.only = TRUE)}
 ```
 
@@ -150,7 +151,7 @@ roll <- function(counts, sides, seed = NULL, drop.lowest.n = NULL) {
 - 'green': FanRoll 'recycled rainbow' 7-die set; white 'core' composition with various-colored flecks throughout and green numbering
     - resin  
 
-- 'teal1' and 'teal2': Gravity Dice individual d20s; teal with silver numbering (same coloring for each; unfortunately before rolling I did not note this, but one has the 15 at the bottom of its facet 'triangle' - otherwise they appear identical) 
+- 'teal1' and 'teal2': Gravity Dice individual d20s; teal with silver numbering (same coloring for each; unfortunately before rolling I did not note this, but one has the 15 at the bottom of its facet 'triangle' - otherwise they appear identical; based on subsequent test rolls, I believe the '15 label at bottom' die is 'teal1') 
     - 6061 aluminum  
 
 - 'mushroom': [Etsy-gifted] individual d20; clear with embedded moss, lavender, and a small mushroom and gold numbering    
@@ -4271,6 +4272,7 @@ d20_bayesian_credint_df |>
   theme(axis.text.x = element_text(angle = 40, hjust = 1, vjust = 1))
 ```
 
+
 ### Credible Interval Zoom-in: Rolling 1 vs 20, and 'Low' vs. 'High' Results
 
 ```{r bayesian-multinomial-1vs20, fig.width = 9, fig.height = 8}
@@ -4347,4 +4349,76 @@ d20_bayesian_lohi_df |>
   theme_bw()
 ```
 
+### Median Posterior Probability of (d20 side) by Set
 
+```{r median-post-prob-viz}
+# Shiny app radar plot for median posterior probability of sides per d20
+shinyApp(
+
+  ui = fluidPage(
+    selectInput("set", "Dice set(s) to emphasize:",
+                choices = unique(d20_bayesian_pcts_df$set)[order(unique(d20_bayesian_pcts_df$set))],
+                selected = unique(d20_bayesian_pcts_df$set)[order(unique(d20_bayesian_pcts_df$set))][1],
+                multiple = TRUE),
+    checkboxInput("arrange_desc", "Arrange sides by median posterior probability"),
+    plotOutput("radar_plot", width = "100%")
+  ),
+
+  server = function(input, output) {
+    median_prob_df <- 
+      d20_bayesian_pcts_df |> 
+      group_by(die, set, side) |> 
+      summarize(median_post_prob = median(value), .groups = "drop")
+    
+    sorted_side_order <- 
+      reactive({
+        if (input$arrange_desc) {
+          median_prob_df |> 
+            filter(set %in% input$set) |>
+            group_by(side) |> 
+            summarize(mean_medn_prob = mean(median_post_prob), 
+                      .groups = "drop") |> 
+            mutate(side = as.integer(side)) |> 
+            arrange(desc(mean_medn_prob)) |> 
+            pull(side)
+          } else { 1:20 }
+      })
+    
+    medn_prob_df <- 
+      reactive({
+        mutate(median_prob_df, side = factor(side, levels = sorted_side_order()))
+      })
+      
+    emph_prob_df <-  
+      reactive({ 
+        median_prob_df |> 
+        filter(set %in% input$set) |> 
+        mutate(side = factor(side, levels = sorted_side_order()))
+        }) 
+    
+    output$radar_plot = renderPlot({
+        ggplot(data = emph_prob_df(), aes(x = side, y = median_post_prob, color = set, group = set)) +
+        geom_hline(yintercept = 1 / 20, linetype = "dashed") +
+        geom_line(data = medn_prob_df(), color = "grey") +
+        geom_point(data = medn_prob_df(), color = "grey") +
+        geom_line(data = emph_prob_df(), linewidth = 1) +
+        geom_point(data = emph_prob_df(), size = 3) +
+        labs(title = "Radar-like Plot of Median Posterior Probability of (side)",
+             subtitle = "All d20 in grey, selected set(s) in color",
+             x = NULL, y = NULL, color = NULL,
+             caption = "Reference line at 5%") +
+        scale_y_continuous(labels = scales::percent) +
+        scale_color_manual(values = set_fill_map) +
+        theme_bw() +
+        theme(axis.text.x = element_text(size = 10),
+              axis.text.y = element_text(size = 10),
+              plot.caption = element_text(size = 10),
+              legend.text = element_text(size = 10)) +
+        coord_polar()
+    })
+  },
+
+  options = list(height = 550)
+)
+
+```
