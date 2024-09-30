@@ -135,7 +135,7 @@ roll <- function(counts, sides, seed = NULL, drop.lowest.n = NULL) {
 
 - Bayesian multinomial modeling
 
-# Dice set notes
+# Dice set notes (listed in order of appearance/testing)
 
 - 'white': Chessex 'speckled arctic camo' 7-die set (CHX 25311); mostly white with grey flecks and black numbering, giving it a 'granite' appearance  
     - urea  
@@ -168,19 +168,22 @@ roll <- function(counts, sides, seed = NULL, drop.lowest.n = NULL) {
     
 - 'infernal': Die Hard Dice 7-die set ('Elessia Kybr - Inquisitor with Gold'); lustrous cardinal red mixed with black, with gold numbering
     - acrylic
+    
+- 'blue': unknown manufacturer 7-die set, received as a gift; believe it is Sage;s Portal 'Sage's Labyrinths' blue weave white ink hollow metal polyhedral set; metallic 'pure blue' hollow metal set with maze-like perforations and white ink
+    - metal  
 
 # Rolling Surface  
 
 - Initial rolls (white, grey, black, most green rolls):  FanRoll velvet dice tray with leather backing ('rainbow watercolor'); 10" x 10" dimensions, moderate padding  
 
-- Later rolls (rest of green, teal[1/2], mushroom, aubergine, ocean, ice, infernal rolls): GameGenic Tokens' Lair magnetic dice tray; 6.5" x 3.75" dimensions, less padding  
+- Later rolls (rest of green, teal[1/2], mushroom, aubergine, ocean, ice, infernal, blue rolls): GameGenic Tokens' Lair magnetic dice tray; 6.5" x 3.75" dimensions, less padding  
 
   - Starting with the 'ice' dice, a uniform layer of cork was added to the tray to provide better cushioning for the sharp-edge dice  
 
 # Power Analysis to Determine Sample Size to Vet Dice
 
 ```{r pwr-analysis}
-sets <- c("white", "grey", "black", "green", "teal1", "teal2", "mushroom", "aubergine", "ocean", "ice", "infernal")
+sets <- c("white", "grey", "black", "green", "teal1", "teal2", "mushroom", "aubergine", "ocean", "ice", "infernal", "blue") 
 dice <- paste0("d", c(4, 6, 8, 10, "%", 12, 20))
 alpha <- 0.05 # P(reject null[fair die] | actually fair die)
 pwr <- 0.80 # P(don't reject null | alt [stated bias exists] is true)
@@ -192,7 +195,7 @@ side_levels <- c(0:20, seq(30, 90, by = 10))
 #  (by dice structure, that means opposite side dice is 'disliked' by same %)
 #  (I'm assuming this holds true for d4 too)
 alt_pref <- 0.33333
-  
+
 dice_setup <- 
   data.frame(
     set = rep(sets, each = length(dice)),
@@ -291,7 +294,8 @@ set_fill_map <-
     "black" = "grey10", "green" = "green4",
     "teal1" = "darkcyan", "teal2" = "steelblue4",
     "mushroom" = "gold3", "aubergine" = "#614051",
-    "ocean" = "cyan2", "ice" = "powderblue", "infernal" = "red3") 
+    "ocean" = "cyan2", "ice" = "powderblue", "infernal" = "red3", 
+    "blue" = "blue") 
 ```
 
 
@@ -4041,6 +4045,168 @@ plot_result(infernal_d20_df, set_fill_map["infernal"])
 ```
 
 
+### Blue Dice
+
+```{r blue-d4, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[12] & dice_setup$die == dice[1], "sample_size"] / 25
+
+blue_d4_df <- # want: 197 rolls
+  data.frame(
+    set = sets[12],
+    die = dice[1],
+    result = c( # 25 per full row
+      1, 2, 2, 3, 4, 4, 3, 3, 3, 1, 2, 4, 2, 3, 3, 4, 3, 4, 4, 3, 3, 4, 4, 3, 4,
+      1, 2, 4, 1, 1, 1, 1, 2, 4, 1, 3, 4, 2, 2, 2, 1, 1, 2, 1, 4, 3, 2, 2, 1, 3,
+      4, 3, 3, 4, 3, 4, 3, 2, 4, 3, 1, 2, 3, 3, 1, 4, 4, 1, 3, 1, 3, 3, 2, 3, 2,
+      4, 2, 1, 3, 1, 1, 3, 2, 3, 4, 4, 3, 2, 4, 1, 1, 1, 2, 2, 4, 4, 4, 3, 1, 1,
+      3, 2, 3, 4, 4, 4, 4, 2, 1, 2, 1, 4, 4, 3, 3, 2, 4, 2, 3, 2, 3, 2, 1, 1, 3, 
+      
+      1, 3, 1, 2, 1, 2, 4, 4, 2, 3, 1, 2, 4, 1, 3, 3, 2, 3, 3, 1, 2, 4, 1, 3, 3, 
+      4, 2, 2, 4, 2, 3, 4, 3, 2, 1, 1, 1, 4, 3, 1, 4, 1, 4, 3, 4, 1, 4, 3, 2, 1,
+      1, 1, 2, 4, 2, 3, 1, 4, 2, 3, 1, 4, 3, 2, 4, 3, 3, 2, 4, 4, 3, 4
+    ) 
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(blue_d4_df, set_fill_map["blue"])
+```
+
+
+```{r blue-d6, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[12] & dice_setup$die == dice[2], "sample_size"] / 25
+
+blue_d6_df <- # want: 347 rolls
+  data.frame(
+    set = sets[12],
+    die = dice[2],
+    result = c( # 25 per full row
+      3, 6, 3, 6, 2, 3, 4, 5, 2, 5, 4, 6, 5, 6, 6, 4, 1, 2, 3, 3, 5, 5, 3, 6, 6,
+      1, 2, 1, 2, 6, 2, 5, 3, 2, 4, 6, 6, 5, 2, 5, 5, 5, 3, 6, 6, 1, 4, 3, 5, 5,
+      6, 2, 6, 1, 5, 5, 6, 6, 3, 1, 6, 2, 5, 4, 4, 4, 1, 5, 3, 1, 3, 6, 2, 2, 4,
+      4, 6, 2, 4, 1, 1, 6, 1, 3, 3, 2, 6, 5, 6, 6, 6, 5, 6, 2, 4, 2, 6, 4, 4, 5,
+      1, 6, 3, 5, 6, 4, 4, 2, 3, 4, 3, 4, 2, 1, 5, 1, 3, 6, 6, 2, 1, 6, 5, 3, 1,
+      
+      1, 3, 4, 2, 3, 4, 2, 6, 2, 1, 1, 1, 1, 5, 3, 3, 2, 1, 3, 5, 5, 3, 3, 1, 1,
+      3, 6, 1, 2, 2, 1, 4, 5, 3, 4, 2, 4, 6, 5, 2, 4, 2, 1, 2, 5, 5, 3, 6, 5, 4,
+      2, 2, 1, 2, 1, 6, 3, 3, 2, 6, 5, 1, 1, 2, 4, 4, 1, 6, 3, 1, 2, 2, 5, 2, 4,
+      3, 6, 5, 4, 2, 6, 3, 1, 5, 6, 1, 2, 6, 3, 3, 1, 5, 3, 5, 1, 1, 6, 3, 1, 1,
+      5, 2, 3, 5, 1, 6, 2, 3, 3, 4, 2, 6, 4, 2, 1, 2, 1, 1, 4, 6, 6, 1, 4, 4, 5,
+      
+      2, 6, 4, 3, 6, 3, 3, 6, 5, 1, 4, 2, 2, 3, 5, 3, 3, 1, 1, 5, 1, 3, 1, 6, 4,
+      2, 6, 1, 1, 2, 5, 4, 4, 5, 4, 3, 1, 5, 4, 4, 5, 5, 6, 2, 5, 6, 4, 2, 1, 2,
+      3, 5, 5, 4, 6, 1, 4, 5, 5, 3, 5, 3, 1, 2, 6, 1, 4, 4, 3, 2, 3, 4, 5, 1, 4,
+      6, 3, 6, 4, 2, 5, 5, 2, 2, 3, 4, 2, 2, 5, 3, 3, 3, 5, 1, 1, 4, 6
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(blue_d6_df, set_fill_map["blue"])
+```
+
+
+```{r blue-d8, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[12] & dice_setup$die == dice[3], "sample_size"] / 25
+
+blue_d8_df <- # want: 517 rolls
+  data.frame(
+    set = sets[12],
+    die = dice[3],
+    result = c( # 25 per full row
+      7, 8, 3, 7, 8, 2, 5, 6, 3, 4, 5, 6, 6, 6, 1, 4, 8, 5, 6, 8, 4, 7, 1, 7, 5,
+      8, 6, 7, 2, 4, 7, 5, 4, 1, 3, 4, 8, 3, 3, 4, 3, 4, 4, 5, 3, 2, 5, 1, 6, 4,
+      8, 4, 7, 7, 5, 2, 5, 1, 8, 3, 8, 7, 7, 6, 5, 3, 8, 3, 2, 1, 2, 2, 5, 1, 2,
+      2
+      )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(blue_d8_df, set_fill_map["blue"])
+```
+
+
+```{r blue-d10, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[12] & dice_setup$die == dice[4], "sample_size"] / 25
+
+blue_d10_df <- # want: 705 rolls
+  data.frame(
+    set = sets[12],
+    die = dice[4],
+    result = c( # 25 per full row
+      0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+blue_d10_df$result[blue_d10_df$result == 0] <- 10
+
+plot_result(blue_d10_df, set_fill_map["blue"])
+```
+
+
+```{r blue-dpct, echo = FALSE, eval = TRUE}
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[12] & dice_setup$die == dice[5], "sample_size"] / 25
+
+`blue_d%_df` <- # want: 705 rolls
+  data.frame(
+    set = sets[12],
+    die = dice[5],
+    result = c( # 25 per full row
+      0
+      
+    )
+  ) %>% 
+  mutate(result = result * 10,
+         obs = 1:nrow(.))
+
+plot_result(`blue_d%_df`, set_fill_map["blue"])
+```
+
+
+```{r blue-d12, echo = FALSE, eval = TRUE}
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[12] & dice_setup$die == dice[6], "sample_size"] / 19
+
+blue_d12_df <- # want: 908 rolls
+  data.frame(
+    set = sets[12],
+    die = dice[6],
+    result = c( # 19 per full row
+      0
+     
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(blue_d12_df, set_fill_map["blue"])
+```
+
+
+```{r blue-d20, echo = FALSE, eval = TRUE}
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[12] & dice_setup$die == dice[7], "sample_size"] / 19
+
+blue_d20_df <- # want: 1851 rolls
+  data.frame(
+    set = sets[12],
+    die = dice[7],
+    result = c( # 19 per full row
+     0
+     
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(blue_d20_df, set_fill_map["blue"])
+```
+
+
+
+
 # Aggregated Analyses
 
 ```{r simulation-dp, echo = FALSE, eval = TRUE}
@@ -4063,7 +4229,9 @@ dice_roll_data <-
                ice_d4_df, ice_d6_df, ice_d8_df, ice_d10_df,
                `ice_d%_df`, ice_d12_df, ice_d20_df,
                infernal_d4_df, infernal_d6_df, infernal_d8_df, infernal_d10_df,
-               `infernal_d%_df`, infernal_d12_df, infernal_d20_df
+               `infernal_d%_df`, infernal_d12_df, infernal_d20_df,
+               blue_d4_df, blue_d6_df, blue_d8_df, blue_d10_df,
+               `blue_d%_df`, blue_d12_df, blue_d20_df
                ))
 
 write.csv(x = dice_roll_data, row.names = FALSE,
@@ -4371,7 +4539,7 @@ set_color_map <-
     "teal1" = NA_character_, "teal2" = NA_character_,
     "mushroom" = NA_character_, "aubergine" = NA_character_,
     "ocean" = NA_character_, "ice" = NA_character_,
-    "infernal" = NA_character_)
+    "infernal" = NA_character_, "blue" = NA_character_)
 
 comparison_plots <- 
   lapply(1:nrow(comparison_plots_df), function(i) {
@@ -4540,7 +4708,8 @@ set_d20_ranks_abbrevmap <-
     "teal1" = "tl1",
     "black" = "blk",
     "white" = "wht",
-    "green" = "grn")
+    "green" = "grn",
+    "blue" = "blu")
 
 d20_sample_sim_df |> 
   mutate(set = factor(set, levels = set_d20_ranks)) |> 
@@ -4616,7 +4785,7 @@ set_lntyp_map <-
     "teal1" = "solid", "teal2" = "solid",
     "mushroom" = "solid", "aubergine" = "dashed",
     "ocean" = "solid", "ice" = "solid", 
-    "infernal" = "dashed")
+    "infernal" = "dashed", "blue" = "solid")
    
 d20_bayesian_pcts_plot_top5 <- 
   d20_bayesian_pcts_df |> 
