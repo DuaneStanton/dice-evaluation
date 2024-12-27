@@ -193,7 +193,7 @@ roll <- function(counts, sides, seed = NULL, drop.lowest.n = NULL) {
 
   - Starting with the 'ice' dice, a uniform layer of cork was added to the tray to provide better cushioning for the sharp-edge dice  
   
-  \*The 'opal' dice were rolled on a folded cloth placed (laying flat) inside a hexagonal rolling tray after rolling the d4 die chipped on the '4' side with the cork-padded tray after 25 rolls; the d4 die will not be used in play.
+  \*The 'opal' dice were rolled on a flat cloth pad placed (laying flat) inside a hexagonal rolling tray after rolling the d4 die chipped on the '4' side with the cork-padded tray after 25 rolls; the initial 25 d4 rolls were omitted.
 
 # Power Analysis to Determine Sample Size to Vet Dice
 
@@ -5770,8 +5770,6 @@ plot_result(lt.rainbow_d20_df, set_fill_map["lt.rainbow"])
 
 ### Opal Dice
 
-__Note: Testing the opal d4 was stopped after 25 observations, as the '4'-end corner chipped off using the cork-padded dice tray used with the previous sets of dice; the 'opal' d4 will not be used in play.__
-
 ```{r opal-d4, echo = FALSE, eval = TRUE}
 # rows of 25 single-digit results to enter
 #dice_setup[dice_setup$set == sets[16] & dice_setup$die == dice[1], "sample_size"] / 25
@@ -5781,7 +5779,15 @@ opal_d4_df <- # want: 197 rolls
     set = sets[16],
     die = dice[1],
     result = c( # 25 per full row
-      2, 2, 3, 4, 2, 1, 1, 4, 4, 3, 1, 1, 3, 2, 4, 2, 1, 2, 3, 3, 4, 3, 3, 4, 3
+      1, 3, 3, 3, 3, 1, 2, 3, 2, 2, 3, 2, 1, 1, 1, 4, 1, 1, 2, 2, 4, 2, 4, 1, 2,
+      1, 3, 3, 3, 4, 2, 3, 1, 1, 2, 3, 1, 4, 4, 4, 4, 3, 2, 3, 1, 3, 4, 3, 3, 3,
+      4, 1, 3, 1, 1, 1, 2, 1, 3, 1, 1, 2, 1, 3, 3, 2, 4, 3, 1, 3, 3, 1, 3, 2, 2,
+      1, 3, 1, 4, 4, 4, 3, 4, 2, 2, 4, 2, 4, 4, 2, 4, 3, 3, 2, 3, 4, 2, 1, 1, 3,
+      4, 4, 3, 2, 4, 4, 1, 2, 3, 2, 3, 4, 4, 3, 1, 1, 2, 2, 2, 3, 3, 1, 4, 3, 2,
+      
+      1, 1, 3, 2, 3, 4, 2, 2, 4, 3, 3, 4, 1, 1, 1, 1, 1, 1, 1, 1, 4, 2, 4, 4, 3, 
+      2, 2, 2, 4, 4, 1, 2, 1, 1, 1, 1, 4, 3, 1, 3, 2, 1, 3, 3, 1, 4, 4, 4, 2, 2,
+      1, 4, 3, 3, 4, 3, 4, 3, 1, 3, 4, 3, 2, 4, 4, 2, 1, 4, 3, 2, 1, 4
     )
   ) %>% 
   mutate(obs = 1:nrow(.))
