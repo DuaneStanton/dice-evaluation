@@ -6220,8 +6220,9 @@ dice_roll_data <-
                expanse_d4_df, expanse_d6_df, expanse_d6s_df, expanse_d8_df, 
                expanse_d10_df, `expanse_d%_df`, expanse_d12_df, expanse_d20_df,
                lt.rainbow_d4_df, lt.rainbow_d6_df, lt.rainbow_d8_df, lt.rainbow_d10_df,
-               `lt.rainbow_d%_df`, lt.rainbow_d12_df, lt.rainbow_d20_df
-               ### ADD OPAL SET
+               `lt.rainbow_d%_df`, lt.rainbow_d12_df, lt.rainbow_d20_df,
+               opal_d4_df, opal_d6_df, opal_d8_df, opal_d10_df,
+               `opal_d%_df`, opal_d12_df, opal_d20_df
                ))
 
 write.csv(x = dice_roll_data, row.names = FALSE,
@@ -6309,8 +6310,8 @@ dice_roll_df_ <-
     chisq_pval = chisq.test(result_tbl)$p.value,
     chisq_stat_sig_0.05 = chisq_pval <= 0.05,
     roll_streaks = list(find_run_lengths(data$result, streaks.only = TRUE)),
-    roll_streak_tbl = list(table(roll_streaks))
-    ### NEED TO ADD find_count_lengths... CONSIDER ONLY COUNTING 'FULL' COUNTS (names(outpt) == neg or pos die_val > store counter)
+    roll_streak_tbl = list(table(roll_streaks)),
+    count_finder = list(find_count_lengths(data$result))
     )
 ```
 
@@ -6368,8 +6369,9 @@ fairest_dice_top5 |>
 # (descending order of 'fairness')
 # aside from d20s, no real concerns of fairness for any observations
 # winning by a country mile, Phoenixville Dice light rainbow d20! seriously cool beans...
-# infernal and aubergine d20 are very 'fair'! All Hail Die Hard Dice...
-# surprised the expanse and ice d20 are third / fourth fairest...
+# infernal and aubergine d20 are very 'fair'! All Hail Die Hard Dice... 
+# pretty cool the opalite d20 is good too!
+# surprised the expanse and ice d20 are fifth / sixth fairest...
 
 noquote("Least Fair Dice - Bottom 3")
 fairest_dice_bot3 |> 
@@ -6390,6 +6392,7 @@ fairest_dice_bot3 |>
 #   just more 3s than 1s
 # 'blue d%' skews toward 80s/90s and away from 0s/10s - expected value is high
 # 'jade d%' has more 10s than 80s (expected value is slightly low), otherwise not too bad
+# 'opal' d12 is a bit low for 3/10 and a bit high for 1/2/4, otherwise not too bad
 ```
 
 ## Mean and SD of Observed Rolls
@@ -6468,7 +6471,8 @@ for (i in seq_along(focus_mean_sd_plots)) {
 ```{r streak-analysis}
 streak_color_map <- 
   c("1" = "blue4", "2" = "blue2", "3" = "dodgerblue3",
-    "4" = "firebrick1", "5" = "firebrick", "6" = "red4")
+    "4" = "firebrick1", "5" = "firebrick", "6" = "red4", 
+    "7" = "magenta4", "8" = "purple4")
 
 dice_streaks_plots <- 
   lapply(1:nrow(dice_roll_df_), function(i) {
@@ -6512,7 +6516,7 @@ streak_sim_plot <-
   theme_bw()
 
 dice_streak_focus <- c(7, 14, 21, 28, 29, 30, 31, 38, 40, 45, 52, 59,
-                       63, 66, 68, 73, 81, 88) #96
+                       63, 66, 68, 73, 81, 88, 95)
 
 focused_streak_plots <- 
   lapply(seq_along(dice_streak_focus), function(i){
@@ -6543,7 +6547,7 @@ for (i in seq_along(focused_streak_plots)) {
 comparison_plots_df <- 
   dice_roll_df_ %>%
   filter(chisq_stat_sig_0.05 |
-         (set %in% c("aubergine", "infernal", "lt.rainbow") & die == "d20")) %>% 
+         (set %in% c("aubergine", "infernal", "lt.rainbow", "opal") & die == "d20")) %>% 
   nest_by(die)
 
 set_color_map <- 
@@ -6712,12 +6716,12 @@ set_d20_ranks <-
   arrange(desc(X50.)) |> 
   pull(set)
 
-"opal" = "opl"
 
 set_d20_ranks_abbrevmap <- 
   c("lt.rainbow" = "rbw",
     "infernal" = "inf",
     "aubergine" = "aub",
+    "opal" = "opl",
     "expanse" = "xpns",
     "ice" = "ice",
     "grey" = "gry",
@@ -6911,7 +6915,8 @@ d20_bayesian_credint_df |>
        caption = "Reference line at 5%") +
   scale_y_continuous(labels = scales::percent) +
   scale_color_manual(values = set_fill_map, guide = "none") +
-  theme_bw()
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 20, vjust = 1, hjust = 1))
 
 # probability 1 or neighboring sides / 20 or neighboring sides
 # deep dive: posterior probability 1 vs. 20
@@ -6964,7 +6969,8 @@ d20_bayesian_1_20_nghbr_df |>
   scale_y_continuous(labels = scales::percent) +
   scale_color_manual(values = set_fill_map, guide = "none") +
   scale_shape_manual(values = c(25, 24)) +
-  theme_bw()
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 20, vjust = 1, hjust = 1))
 
 # probability 1-3 vs 18-20
 btm_top <- 3
@@ -7017,7 +7023,8 @@ d20_bayesian_lohi_df |>
   scale_y_continuous(labels = scales::percent) +
   scale_color_manual(values = set_fill_map, guide = "none") +
   scale_shape_manual(values = c(25, 24)) +
-  theme_bw()
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 20, vjust = 1, hjust = 1))
 ```
 
 
