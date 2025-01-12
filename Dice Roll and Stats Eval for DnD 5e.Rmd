@@ -773,3 +773,70 @@ sim_rolls_homebrew_tbl_2_ |>
                 bootstrap_options = c("striped", "bordered"))
 ```
 
+# Checking Expected Outcomes from Rolling with Advantage/Disadvantage vs. a Straight d20 Roll
+
+- Advantage: Roll 2d20, use the higher number  
+- Straight: Roll 1d20  
+- Disadvantage: Roll 2d20, use the lower number
+
+```{r}
+# checking the impact of advantage/disadvantage vs. a straight d20 roll
+n_sim <- 5e4
+
+d20_roll_df <- 
+  data.frame(seed = 1:n_sim,
+             strt = 0,
+             adv = 0,
+             disadv = 0)
+
+roll_res <- vector("list", nrow(d20_roll_df))
+
+for (i in 1:nrow(d20_roll_df)) {
+  roll_res[[i]] <- 
+    roll(counts = 2, sides = 20, seed = d20_roll_df$seed[i])
+  
+  d20_roll_df$strt[i] <- roll_res[[i]]$`2d20`$rolls[1]
+  d20_roll_df$adv[i] <- max(roll_res[[i]]$`2d20`$rolls)
+  d20_roll_df$disadv[i] <- min(roll_res[[i]]$`2d20`$rolls)
+}
+
+d20_long_df <- 
+  d20_roll_df |> 
+  pivot_longer(cols = c(strt, adv, disadv),
+               names_to = "roll", values_to = "value") |>
+  mutate(roll = case_when(roll == "strt" ~ "straight",
+                          roll == "adv" ~ "advantage",
+                          roll == "disadv" ~ "disadvantage",
+                          TRUE ~ "ERROR"),
+         roll = factor(roll, levels = c("disadvantage", "straight", "advantage")))
+
+d20_smry_df <- 
+  d20_long_df |> 
+  group_by(roll) |> 
+  summarize(mean = mean(value),
+            sd = sd(value),
+            median = median(value),
+            .groups = "drop") |> 
+  mutate(across(.cols = where(is.numeric),
+                .fns = ~ sprintf(.x, fmt = "%.1f")))
+
+noquote(paste("Summary of", format(n_sim, big.mark = ","), "simulated d20 rolls"))
+knitr::kable(d20_smry_df)
+
+d20_long_df |> 
+  group_by(roll, value) |> 
+  summarize(count = n(), .groups = "drop") |> 
+  group_by(roll) |> 
+  mutate(total_rolls = sum(count)) |> 
+  ungroup() |> 
+  mutate(propn = count / total_rolls) |> 
+  ggplot(aes(x = value, y = propn, color = roll)) +
+  geom_point(position = position_dodge(width = 0.2), size = 3, shape = 21, stroke = 2) +
+  labs(title = paste(format(n_sim, big.mark = ","), "simulated d20 rolls"),
+       y = "Percentage of rolls",
+       caption = "Disadvantage: lower of two rolls\nStraight: first of two rolls\nAdvantage: higher of two rolls") +
+  scale_x_continuous(breaks = 1:20, minor_breaks = FALSE) +
+  scale_y_continuous(labels = scales::percent) +
+  theme_bw()
+```
+
