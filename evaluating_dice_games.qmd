@@ -1,0 +1,178 @@
+---
+title: "Dice Games Evaluation"
+author: "Duane Stanton"
+number_sections: true
+format: html
+---
+
+```{r roll-sim-fxn}
+#| echo: false
+
+# load packages used throughout this document
+pkgs <- c("dplyr", "tidyr", "ggplot2", "flextable")
+for (i in 1:length(pkgs)) {library(pkgs[i], character.only = TRUE)}
+
+# function to simulate dice rolls ==============================================
+# inputs:
+# - counts: vector for number of rolls
+# - sides: vector of sides per die (aligned with counts)
+# - seed: number to set random number generator seed for replication
+#     default (NULL) sets no RNG seed
+# - drop.lowest.n: vector to specify if dropping the lowest 'n' results
+#     default (NULL) will drop none for any roll
+#     a single number will apply that number to any roll
+#     a vector of 
+# output:
+# - list with 1 entry per roll set; each entry has the final rolls
+#     (excluding any lowest dropped rolls if specified) and sum of the set
+#     the final list entry is the sum across all roll sets
+roll <- function(counts, sides, seed = NULL, drop.lowest.n = NULL) {
+  if (length(counts) != length(sides)) {stop("counts and sides lengths don't match")}
+  if (!all(sides %in% c(4, 6, 8, 10, 100, 12, 20))) {
+    stop("sides can only contain 4, 6, 8, 10, 100 (%), 12, 20")}
+  set.seed(seed)
+  pct_idx <- sides == 100
+  
+  if (is.null(drop.lowest.n)){d.l.n <- rep(0, length(counts))
+  } else {
+    if (any(drop.lowest.n >= counts)) {stop("drop.lowest.n must be at most counts - 1")}
+    if (length(drop.lowest.n) == 1L) {d.l.n <- rep(drop.lowest.n, length(counts))
+    } else {
+      if (length(drop.lowest.n) != length(counts)) {
+        stop("drop.lowest.n must be one of: same length as counts, a single number, or NULL")
+      }
+      d.l.n <- drop.lowest.n
+      }
+  }
+  
+  # check feasibility of dropping lowest 'n' rolls in each case
+  if (any(d.l.n < 0)) {stop("drop.lowest.n cannot be negative")}
+
+  roll_set <- 
+    lapply(1:length(sides), function(i) {
+      if (pct_idx[i]) {
+        ones <- sample(0:9, size = counts[i], replace = TRUE)
+        tens <- sample(0:9 * 10, size = counts[i], replace = TRUE)
+        rslt <- tens + ones
+        rslt[rslt == 0] <- 100
+        
+        if (d.l.n[i] > 0) {rslt <- (rslt[order(rslt)])[-c(1:d.l.n[i])]}
+        rslt <- list("rolls" = rslt, "sum" = sum(rslt))
+        rslt
+      } else {
+        rslt <- sample(1:sides[i], size = counts[i], replace = TRUE)
+        if (d.l.n[i] > 0) {rslt <- (rslt[order(rslt)])[-c(1:d.l.n[i])]}
+        rslt <- list("rolls" = rslt, "sum" = sum(rslt))
+        rslt
+        }
+      })
+  
+  names(roll_set) <- paste0(counts, "d", ifelse(pct_idx, "%", sides))
+  sums <- 
+    vapply(seq_along(roll_set), function(i){roll_set[[i]]$sum}, numeric(1L)) 
+  
+  roll_set[[length(roll_set) + 1]] <- c("ovr total" = sum(sums))
+  
+  roll_set
+}
+```
+
+
+_Evaluating outcomes for dice games - intended for TTRPG in-world 'gambling'_
+
+# MADS
+
+Rules:
+
+1. Roll a d20  
+
+2. Roll a d4, d6, d8, d10, or d12 and *m*ultiply your step 1 result by the step 2 roll (1 * 2)  
+
+3. Roll a d4, d6, d8, d10, or d12 and *a*dd the roll to the step 2 result (1 * 2 + 3)  
+
+4. Roll a d4, d6, d8, d10, or d12 and *d*ivide the step 3 result by the roll ([1 * 2 + 3] / 4)  
+
+5. Roll a d4, d6, d8, d10, or d12 and *s*ubtract the roll from the step 4 result ([1 * 2 + 3] / 4 - 5)  
+
+6. Determine bonuses from decisions made at steps 4 and 5:  
+
+    - The step 4 bonus is $\frac{\text{# sides step 4 die}}{\text{# sides step 2 die}}$  
+    
+    - The step 5 bonus is $\text{# sides step 5 die}-\text{# sides step 3 die}$  
+    
+7.  Determine scores and rewards:  
+
+    - The final score is the step 5 result multiplied by the step 4 bonus  
+    
+    - The reward (if yours is the highest score) is (pot - house take) + step 5 bonus (if bonus is negative, goes to the dealer)  
+    
+    
+Optional variations:
+
+  - Require different-sided dice rolls for each of steps 2-5  
+  
+  - Require the step 4 dice to have more sides than the step 2 die  
+  
+  - Give a bonus (score or reward) for roll results repeating the same number or consecutive numbers - larger bonus for longer sequences  
+
+    
+Simulated outcomes:  
+
+```{r simulated-mads}
+#| echo: false  
+
+rolls_sim_df <- 
+  expand.grid(
+    roll_1_die = 20,
+    roll_2_die = c(4, 6, 8, 10, 12),
+    roll_3_die = c(4, 6, 8, 10, 12),
+    roll_4_die = c(4, 6, 8, 10, 12),
+    roll_5_die = c(4, 6, 8, 10, 12)
+  )
+
+n_sim <- 1e3
+
+# function to evaluate MADS simulation rolls
+# input: rolls : named vector of roll results from roll()
+# output: calculated score for MADS (currently just 'vanilla MADS')
+eval_MADS <- function(rolls) {
+  rlls <- vapply(rolls, function (x) as.numeric(x["rolls"]), numeric(1L)) 
+  sds <- as.integer(sub("^1d", "", names(rlls)))
+  
+  score <- (rlls[1] * rlls[2] + rlls[3]) / rlls[4] - rlls[5]
+  bonus <- sds[4] / sds[2]
+
+  score * bonus
+}
+
+# x_ <- roll(counts = rep(1, 5), sides = c(20, 4, 6, 8, 12), seed = 42, drop.lowest.n = NULL)[-6]
+# vapply(x_, function (x) as.numeric(x["rolls"]), numeric(1L)) 
+ 
+###
+### NEED TO MAKE A MATRIX TO STORE SIM RESULTS, THEN EVALUATE THAT...
+###
+roll_sim_mat <- matrix(0, nrow = nrow(rolls_sim_df), ncol = n_sim)
+# i = iterate row, j = iterate col
+
+
+#rolls_sim_df$sim_results <- vector("list", nrow(rolls_sim_df))
+#sim_vec <- vector("numeric", n_sim)
+for (i in 1:nrow(rolls_sim_df)) {
+  for (j in 1:n_sim) {
+    roll_sim_mat[i, j] <- 
+      eval_MADS(
+        roll(counts = rep(1, 5),
+             sides = unlist(rolls_sim_df[i, paste0("roll_", 1:5, "_die")]),
+             seed = i + j)[-6] # drops 'total' entry
+      )
+    }
+  }
+  
+rolls_sim_df$min_score <- apply(roll_sim_mat, 1, min)
+rolls_sim_df$max_score <- apply(roll_sim_mat, 1, max)
+rolls_sim_df$mean_score <- apply(roll_sim_mat, 1, mean)
+rolls_sim_df$sd_score <- apply(roll_sim_mat, 1, sd)
+
+
+```
+
