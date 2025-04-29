@@ -185,21 +185,30 @@ roll <- function(counts, sides, seed = NULL, drop.lowest.n = NULL) {
      
 - 'opal': Fennek & Finch 'Geometric Opalite' 7-die set; milky-white (translucent) dice with gold numbering outlined by gold geometric patterns  
     - opalite (glass)  
+    
+- 'Roy G. Biv': clear Die Hard Dice Project Avalore dice inked with gold mica powder and red (d4) / orange (d6) / yellow (d8) / green (d10) / blue (d%) / indigo (d12) / violet (d20) acrylic paint (white acrylic base layer to reduce impact to readability)  
+    - acrylic  
+    
+- 'honey': Die Hard Dice 'whipped honey' 7-die set; opaque dark yellow with gold swirls inked in brown
+    - acrylic
+    
+- 'mini': Die Hard Dice 'critlings' miniature 7-die set; clear with black ink
+    - acrylic
 
 # Rolling Surface  
 
 - Initial rolls (white, grey, black, most green rolls):  FanRoll velvet dice tray with leather backing ('rainbow watercolor'); 10" x 10" dimensions, moderate padding  
 
-- Later rolls (rest of green, teal[1/2], mushroom, aubergine, ocean, ice, infernal, blue, jade, expanse, light rainbow, opal\* rolls): GameGenic Tokens' Lair magnetic dice tray; 6.5" x 3.75" dimensions, less padding  
+- Later rolls (rest of green, teal[1/2], mushroom, aubergine, ocean, ice, infernal, blue, jade, expanse, light rainbow, opal\*, Roy G. Biv, Honey, mini rolls): GameGenic Tokens' Lair magnetic dice tray; 6.5" x 3.75" dimensions, less padding  
 
-  - Starting with the 'ice' dice, a uniform layer of cork was added to the tray to provide better cushioning for the sharp-edge dice  
+  - Starting with the 'ice' dice, a layer of cork was added to the tray to provide better cushioning for the sharp-edge dice  
   
   \*The 'opal' dice were rolled on a flat cloth pad placed (laying flat) inside a hexagonal rolling tray after rolling the d4 die chipped on the '4' side with the cork-padded tray after 25 rolls; the initial 25 d4 rolls were omitted.
 
 # Power Analysis to Determine Sample Size to Vet Dice
 
 ```{r pwr-analysis}
-sets <- c("white", "grey", "black", "green", "teal1", "teal2", "mushroom", "aubergine", "ocean", "ice", "infernal", "blue", "jade", "expanse", "lt.rainbow", "opal")  
+sets <- c("white", "grey", "black", "green", "teal1", "teal2", "mushroom", "aubergine", "ocean", "ice", "infernal", "blue", "jade", "expanse", "lt.rainbow", "opal", "rgb", "honey", "mini")  
 dice <- paste0("d", c(4, 6, 8, 10, "%", 12, 20))
 alpha <- 0.05 # P(reject null[fair die] | actually fair die)
 pwr <- 0.80 # P(don't reject null | alt [stated bias exists] is true)
@@ -317,7 +326,8 @@ set_fill_map <-
     "mushroom" = "gold3", "aubergine" = "#614051",
     "ocean" = "cyan2", "ice" = "powderblue", "infernal" = "red3", 
     "blue" = "blue", "jade" = "seagreen", "expanse" = "#07054B", 
-    "lt.rainbow" = "greenyellow", "opal" = "lightcyan2") 
+    "lt.rainbow" = "greenyellow", "opal" = "lightcyan2",
+    "rgb" = "darkviolet", "honey" = "goldenrod1", "mini" = "coral") 
 ```
 
 
@@ -6191,6 +6201,457 @@ plot_result(opal_d20_df, set_fill_map["opal"])
 ```
 
 
+
+### Roy G. Biv Dice
+
+```{r rgb-d4, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[17] & dice_setup$die == dice[1], "sample_size"] / 25
+
+rgb_d4_df <- # want: 197 rolls
+  data.frame(
+    set = sets[17],
+    die = dice[1],
+    result = c( # 25 per full row
+      0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(rgb_d4_df, set_fill_map["rgb"])
+```
+
+
+```{r rgb-d6, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[17] & dice_setup$die == dice[2], "sample_size"] / 25
+
+rgb_d6_df <- # want: 347 rolls
+  data.frame(
+    set = sets[17],
+    die = dice[2],
+    result = c( # 25 per full row
+      0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(rgb_d6_df, set_fill_map["rgb"])
+```
+
+
+```{r rgb-d8, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[17] & dice_setup$die == dice[3], "sample_size"] / 25
+
+rgb_d8_df <- # want: 516 rolls
+  data.frame(
+    set = sets[17],
+    die = dice[3],
+    result = c( # 25 per full row
+      0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(rgb_d8_df, set_fill_map["rgb"])
+```
+
+
+```{r rgb-d10, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[17] & dice_setup$die == dice[4], "sample_size"] / 25
+
+rgb_d10_df <- # want: 705 rolls
+  data.frame(
+    set = sets[17],
+    die = dice[4],
+    result = c( # 25 per full row
+      0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+rgb_d10_df$result[rgb_d10_df$result == 0] <- 10
+
+plot_result(rgb_d10_df, set_fill_map["rgb"])
+```
+
+
+```{r rgb-dpct, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[17] & dice_setup$die == dice[5], "sample_size"] / 25
+
+# note: for convenience, rolls are recorded at 10% of roll value (e.g. 10 -> 1),
+#       then multiplied by 10 at the end to get the original value
+# note: '00' is read as '0' unless the simultaneous d10 is '0'; that makes '100'
+`rgb_d%_df` <- # want: 705 rolls
+  data.frame(
+    set = sets[17],
+    die = dice[5],
+    result = c( # 25 per full row
+      0
+    )
+  ) %>% 
+  mutate(result = result * 10,
+         obs = 1:nrow(.))
+
+plot_result(`rgb_d%_df`, set_fill_map["rgb"])
+```
+
+
+```{r rgb-d12, echo = FALSE, eval = TRUE}
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[17] & dice_setup$die == dice[6], "sample_size"] / 19
+
+rgb_d12_df <- # want: 908 rolls
+  data.frame(
+    set = sets[17],
+    die = dice[6],
+    result = c( # 19 per full row
+      0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(rgb_d12_df, set_fill_map["rgb"])
+```
+
+
+```{r rgb-d20, echo = FALSE, eval = TRUE}
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[17] & dice_setup$die == dice[7], "sample_size"] / 19
+
+rgb_d20_df <- # want: 1851 rolls
+  data.frame(
+    set = sets[17],
+    die = dice[7],
+    result = c( # 19 per full row
+      7, 20, 18, 16,  7,  9, 15,  6, 12, 13,  2,  4, 10,  7,  2, 12,  5, 14,  3, 
+      3,  9, 19,  4,  7,  2, 13, 14, 16,  8, 18,  6,  2, 14,  8, 16,  8, 16, 15,
+     17, 14, 13, 19, 18,  8, 16, 10,  6, 12,  9, 20,  7, 14, 16,  5,  8, 12,  2,
+      2, 15,  9,  8,  2,  6, 14,  2, 13,  6,  5,  4, 16, 19, 17, 16,  4,  5, 16,
+     16,  8, 18, 17, 13, 13,  3,  8, 17, 16, 10, 11, 13, 18, 16,  1, 14, 12, 18,
+     
+     13,  2,  4, 11,  3, 14, 18, 19, 13,  2,  5, 17, 15, 11, 19, 11,  7,  1,  1,
+      7,  3,  9,  7, 15,  3,  1,  1, 10,  9,  4, 11,  1, 14, 15, 16,  4,  3, 20,
+     16, 12,  7, 12,  4, 16,  2,  4,  6, 20, 13, 14,  5, 11, 19, 18, 15,  6, 15,
+      5, 17,  7,  5,  4,  5, 19, 14,  1, 12, 18, 16,  2, 13,  3,  5, 13,  3, 16,
+     11, 16,  4,  4, 14, 13, 15, 16, 19, 17, 20, 18,  4, 12,  9,  7, 17, 15,  1,
+     
+     14, 20, 20,  2,  4, 20, 15, 19, 14, 17,  6,  5, 14,  7, 17, 17,  2,  8, 20,
+     10, 17,  8, 20, 19, 18, 14,  5, 16, 18, 13, 19, 13,  3, 14, 10, 11,  3,  3, 
+      2, 10, 10,  7, 17,  4, 10, 12, 13,  3,  2,  7,  9, 11,  2,  2, 16, 17,  6,
+     20, 19,  9,  6, 15, 17, 16,  3, 20,  6,  7,  9,  9, 14, 13,  1,  2, 16,  9, 
+      9, 13,  4, 14,  7,  8,  5,  5,  4, 11,  8,  5, 16, 18, 13,  6,  1, 18,  9,
+     
+      5, 18,  1,  4,  3, 20,  1, 18,  2, 12, 10,  8, 16, 20,  5, 18, 10,  9, 15,
+      4, 12, 10, 17,  7,  4, 16, 16, 11,  9, 11,  4,  3,  6, 13,  8,  9,  1,  5,
+      4,  7, 15, 12,  7, 17, 19,  2, 16, 10,  4, 16, 17, 10, 12, 13, 12,  3,  5,
+      9, 19,  4, 19,  4, 12, 10, 14, 14, 17, 11, 17,  9,  2, 15,  7, 20,  2, 15, 
+      6, 16,  3, 11,  9, 11,  5,  8,  3, 11, 11,  9,  8,  6, 17, 12, 18,  8, 18,
+     
+      3, 14,  8, 14, 20, 11,  5,  1, 18, 18,  4, 14,  8, 10,  9,  1, 11,  9, 16,
+     10, 20,  8, 16,  4, 17,  2,  3, 15, 20, 11,  2, 20, 17, 15, 19,  3,  7,  2,
+     12, 19, 12, 10, 20,  2,  4,  3, 12, 11, 15,  6,  5, 16, 14,  8, 16,  1, 15,
+     10, 14,  5, 16,  6,  2, 18,  6,  3, 11,  6, 19, 19, 12,  7,  4, 18, 13,  5,
+     11, 18, 11, 18, 17, 14,  4, 16, 14, 13, 17,  4,  7,  7,  5, 18, 11, 12,  7,
+     
+      8, 16, 11,  8, 11,  8,  2, 14, 11, 20,  9, 17,  5,  4, 16, 11,  7,  4, 11,
+      8, 16, 18, 20,  1, 17, 11, 18, 13,  9,  2, 18,  2, 16,  6,  7,  3, 12, 15,
+      3,  6, 20, 10, 13, 10, 14,  8,  3,  8, 15,  7, 19,  8,  8,  2,  2, 15,  1,
+     11,  9, 19,  5,  5,  8,  5,  2, 20, 20, 10, 11,  4, 18,  3, 19,  7,  6, 20,
+     13, 14, 16, 14, 13,  3,  5,  6, 19,  3,  5, 10, 15,  3, 11, 15,  3, 17,  2,
+     
+     16,  7, 14, 17, 14, 18, 17,  8,  6, 16, 16, 19,  1, 17, 11,  3,  8, 11, 15,
+     14,  8, 17, 16, 11, 18,  7,  7,  1,  1, 11, 14,  4, 17, 11,  6, 15,  1,  8,
+     18,  2,  6, 20,  1,  6, 14,  5,  8,  5,  6,  9,  1, 10, 15,  7,  2,  6,  2,
+      6,  1, 11, 15, 13, 14,  8,  2,  4,  2,  8, 10, 14, 12, 15,  3,  5,  4, 19,
+      4, 19, 20,  1,  6, 16, 14, 13, 17, 20, 12, 17,  2, 15, 13,  2,  3, 19, 20,
+     
+     ### RESUME HERE
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(rgb_d20_df, set_fill_map["rgb"])
+```
+
+
+
+### Honey Dice
+
+```{r honey-d4, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[18] & dice_setup$die == dice[1], "sample_size"] / 25
+
+honey_d4_df <- # want: 197 rolls
+  data.frame(
+    set = sets[18],
+    die = dice[1],
+    result = c( # 25 per full row
+      0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(honey_d4_df, set_fill_map["honey"])
+```
+
+
+```{r honey-d6, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[18] & dice_setup$die == dice[2], "sample_size"] / 25
+
+honey_d6_df <- # want: 347 rolls
+  data.frame(
+    set = sets[18],
+    die = dice[2],
+    result = c( # 25 per full row
+      0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(honey_d6_df, set_fill_map["honey"])
+```
+
+
+```{r honey-d8, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[18] & dice_setup$die == dice[3], "sample_size"] / 25
+
+honey_d8_df <- # want: 516 rolls
+  data.frame(
+    set = sets[18],
+    die = dice[3],
+    result = c( # 25 per full row
+      0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(honey_d8_df, set_fill_map["honey"])
+```
+
+
+```{r honey-d10, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[18] & dice_setup$die == dice[4], "sample_size"] / 25
+
+honey_d10_df <- # want: 705 rolls
+  data.frame(
+    set = sets[18],
+    die = dice[4],
+    result = c( # 25 per full row
+      0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+honey_d10_df$result[honey_d10_df$result == 0] <- 10
+
+plot_result(honey_d10_df, set_fill_map["honey"])
+```
+
+
+```{r honey-dpct, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[18] & dice_setup$die == dice[5], "sample_size"] / 25
+
+# note: for convenience, rolls are recorded at 10% of roll value (e.g. 10 -> 1),
+#       then multiplied by 10 at the end to get the original value
+# note: '00' is read as '0' unless the simultaneous d10 is '0'; that makes '100'
+`honey_d%_df` <- # want: 705 rolls
+  data.frame(
+    set = sets[18],
+    die = dice[5],
+    result = c( # 25 per full row
+      0
+    )
+  ) %>% 
+  mutate(result = result * 10,
+         obs = 1:nrow(.))
+
+plot_result(`honey_d%_df`, set_fill_map["honey"])
+```
+
+
+```{r honey-d12, echo = FALSE, eval = TRUE}
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[18] & dice_setup$die == dice[6], "sample_size"] / 19
+
+honey_d12_df <- # want: 908 rolls
+  data.frame(
+    set = sets[18],
+    die = dice[6],
+    result = c( # 19 per full row
+      0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(honey_d12_df, set_fill_map["honey"])
+```
+
+
+```{r honey-d20, echo = FALSE, eval = TRUE}
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[18] & dice_setup$die == dice[7], "sample_size"] / 19
+
+honey_d20_df <- # want: 1851 rolls
+  data.frame(
+    set = sets[18],
+    die = dice[7],
+    result = c( # 19 per full row
+     0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(honey_d20_df, set_fill_map["honey"])
+```
+
+
+
+
+
+
+### Mini Dice
+
+```{r mini-d4, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[19] & dice_setup$die == dice[1], "sample_size"] / 25
+
+mini_d4_df <- # want: 197 rolls
+  data.frame(
+    set = sets[19],
+    die = dice[1],
+    result = c( # 25 per full row
+      0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(mini_d4_df, set_fill_map["mini"])
+```
+
+
+```{r mini-d6, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[19] & dice_setup$die == dice[2], "sample_size"] / 25
+
+mini_d6_df <- # want: 347 rolls
+  data.frame(
+    set = sets[19],
+    die = dice[2],
+    result = c( # 25 per full row
+      0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(mini_d6_df, set_fill_map["mini"])
+```
+
+
+```{r mini-d8, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[19] & dice_setup$die == dice[3], "sample_size"] / 25
+
+mini_d8_df <- # want: 516 rolls
+  data.frame(
+    set = sets[19],
+    die = dice[3],
+    result = c( # 25 per full row
+      0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(mini_d8_df, set_fill_map["mini"])
+```
+
+
+```{r mini-d10, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[19] & dice_setup$die == dice[4], "sample_size"] / 25
+
+mini_d10_df <- # want: 705 rolls
+  data.frame(
+    set = sets[19],
+    die = dice[4],
+    result = c( # 25 per full row
+      0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+mini_d10_df$result[mini_d10_df$result == 0] <- 10
+
+plot_result(mini_d10_df, set_fill_map["mini"])
+```
+
+
+```{r mini-dpct, echo = FALSE, eval = TRUE}
+# rows of 25 single-digit results to enter
+#dice_setup[dice_setup$set == sets[19] & dice_setup$die == dice[5], "sample_size"] / 25
+
+# note: for convenience, rolls are recorded at 10% of roll value (e.g. 10 -> 1),
+#       then multiplied by 10 at the end to get the original value
+# note: '00' is read as '0' unless the simultaneous d10 is '0'; that makes '100'
+`mini_d%_df` <- # want: 705 rolls
+  data.frame(
+    set = sets[19],
+    die = dice[5],
+    result = c( # 25 per full row
+      0
+    )
+  ) %>% 
+  mutate(result = result * 10,
+         obs = 1:nrow(.))
+
+plot_result(`mini_d%_df`, set_fill_map["mini"])
+```
+
+
+```{r mini-d12, echo = FALSE, eval = TRUE}
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[19] & dice_setup$die == dice[6], "sample_size"] / 19
+
+mini_d12_df <- # want: 908 rolls
+  data.frame(
+    set = sets[19],
+    die = dice[6],
+    result = c( # 19 per full row
+      0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(mini_d12_df, set_fill_map["mini"])
+```
+
+
+```{r mini-d20, echo = FALSE, eval = TRUE}
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[19] & dice_setup$die == dice[7], "sample_size"] / 19
+
+mini_d20_df <- # want: 1851 rolls
+  data.frame(
+    set = sets[19],
+    die = dice[7],
+    result = c( # 19 per full row
+     0
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(mini_d20_df, set_fill_map["mini"])
+```
+
+
+
 # Aggregated Analyses
 
 ```{r simulation-dp, echo = FALSE, eval = TRUE}
@@ -6223,7 +6684,13 @@ dice_roll_data <-
                lt.rainbow_d4_df, lt.rainbow_d6_df, lt.rainbow_d8_df, lt.rainbow_d10_df,
                `lt.rainbow_d%_df`, lt.rainbow_d12_df, lt.rainbow_d20_df,
                opal_d4_df, opal_d6_df, opal_d8_df, opal_d10_df,
-               `opal_d%_df`, opal_d12_df, opal_d20_df
+               `opal_d%_df`, opal_d12_df, opal_d20_df,
+               rgb_d4_df, rgb_d6_df, rgb_d8_df, rgb_d10_df,
+               `rgb_d%_df`, rgb_d12_df, rgb_d20_df,
+               honey_d4_df, honey_d6_df, honey_d8_df, honey_d10_df,
+               `honey_d%_df`, honey_d12_df, honey_d20_df,
+               mini_d4_df, mini_d6_df, mini_d8_df, mini_d10_df,
+               `mini_d%_df`, mini_d12_df, mini_d20_df
                ))
 
 write.csv(x = dice_roll_data, row.names = FALSE,
@@ -6526,7 +6993,7 @@ streak_sim_plot <-
   theme_bw()
 
 dice_streak_focus <- c(7, 14, 21, 28, 29, 30, 31, 38, 40, 45, 52, 59,
-                       63, 66, 68, 73, 81, 88, 95)
+                       63, 66, 68, 73, 81, 88, 95) #102 109 116
 
 focused_streak_plots <- 
   lapply(seq_along(dice_streak_focus), function(i){
@@ -6573,7 +7040,8 @@ set_color_map <-
     "ocean" = NA_character_, "ice" = NA_character_,
     "infernal" = NA_character_, "blue" = NA_character_,
     "jade" = NA_character_, "expanse" = NA_character_,
-    "lt.rainbow" = "navy", "opal" = "gold")
+    "lt.rainbow" = "navy", "opal" = "gold",
+    "rgb" = NA_character_, "honey" = NA_character_, "mini" = NA_character_)
 
 comparison_plots <- 
   lapply(1:nrow(comparison_plots_df), function(i) {
@@ -6750,6 +7218,8 @@ set_d20_ranks_abbrevmap <-
     "white" = "wht",
     "green" = "grn" 
     )
+
+#"rgb" = "rgb", "honey" = "hny", "mini" = "min"
 
 d20_sample_sim_df |> 
   mutate(set = factor(set, levels = set_d20_ranks)) |> 
