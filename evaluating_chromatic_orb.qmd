@@ -1,0 +1,175 @@
+---
+title: "Considering Chromatic Orb"
+author: "Duane Stanton"
+format: html
+editor: visual
+---
+
+# Intro
+
+The 2024 edition _Chromatic Orb_ spell has a fun mechanism that seems to have come from the 2014 edition _Chaos Bolt_ - rolling the same number two or more times on the d8 damage die enables the 'orb' to (-potentially-) 'bounce' to hit a new target. Here's the wording of the 2024 _Chromatic Orb_:
+
+> You hurl an orb of energy at a target within range. Choose Acid, Cold, Fire, Lightning, Poison, or Thunder for the type of orb you create, and then make a ranged spell attack against the target. On a hit, the target takes 3d8 damage of the chosen type.
+
+> If you roll the same number on two or more of the d8s, the orb leaps to a different target of your choice within 30 feet of the target. Make an attack roll against the new target, and make a new damage roll. The orb can't leap again unless you cast the spell with a level 2+ spell slot.
+
+> Using a Higher-Level Spell Slot. The damage increases by 1d8 for each spell slot level above 1. The orb can leap a maximum number of times equal to the level of the slot expended, and a creature can be targeted only once by each casting of this spell.
+
+
+# Simulation Code
+
+The code below calculates the expected damage from casting _Chromatic Orb_ for a given combination of spell level, target ACs (armor classes), spell attack modifier, and the type of the roll (rolling with advantage/disadvantage or making a 'straight roll').
+
+__Calculating d20 attack roll probabilities__
+
+```{r calc_1d20_prob}
+# function to calculate 1d20 probabilities
+# disadvantage/advantage code core source: commenter Jonathan Gilligan in 
+# https://statmodeling.stat.columbia.edu/2014/07/12/dnd-5e-advantage-disadvantage-probability/
+calc_1d20_prob <- function(roll_type = "str", min_goal = NULL) {
+  if (!(roll_type %in% c("str", "adv", "dis"))) {
+    stop("roll_typ must be one of str, adv, dis")
+  }
+  if (!is.null(min_goal) && !(min_goal %in% c(1:20))) {
+    stop("min_goal must be an integer between 1 and 20 when not NULL")
+  }
+  
+  advantage <- unlist(outer(1:20,1:20, function(x, y) {ifelse(x > y, x, y)}))
+  adv_probs <- vapply(1:20, function(i) { mean(advantage == i) }, numeric(1L))
+  
+  disadvantage <- unlist(outer(1:20,1:20, function(x, y) {ifelse(x < y, x, y)}))
+  dis_probs <- vapply(1:20, function(i) { mean(disadvantage == i) }, numeric(1L))
+
+  str_probs <- rep(1 / 20, 20)
+  
+  names(adv_probs) <- names(dis_probs) <- names(str_probs) <- 1:20
+  
+  ref_probs <- 
+    if (roll_type == "adv") {adv_probs
+    } else if (roll_type == "str") {str_probs
+    } else {dis_probs}
+  
+  if (is.null(min_goal)) { # output full probability vector
+    ref_probs
+  } else { # output probability of >= min_goal
+    sum(ref_probs[as.numeric(names(ref_probs)) >= min_goal])
+  }
+}
+```
+
+
+__Calculating expected value of a damage roll (plus probability of rolling multiple same-side results for the 'bounce')__
+
+```{r calc_dice_probs}
+# function to calculate dice total AND presence of multi-match rolls
+# if tgt_val = NULL, output the full possible-totals data.frame
+calc_dice_probs <- function(n_dice, n_sides, tgt_val = NULL) {
+  # calculate dice result possibility grid
+  dice_side_list <- lapply(1:n_dice, function(i) {1:n_sides})
+  dice_poss <- expand.grid(dice_side_list)
+  dice_poss$tot <- apply(dice_poss, 1, sum)
+  dice_poss$n_eq <- 
+    vapply(1:nrow(dice_poss), function(i) {
+      n_dice - length(unique(unlist(dice_poss[i, 1:n_dice]))) + 1
+    }, numeric(1L))
+  
+  dice_poss$consec <- dice_poss$n_eq > 1
+  
+  tot_poss <- unique(dice_poss$tot)
+  tot_poss <- tot_poss[order(tot_poss)]
+  tot_prob <- data.frame(tot = tot_poss)
+  tot_prob$prob_tot <- 
+    vapply(1:length(tot_poss), function(i) {
+      mean(dice_poss$tot == tot_poss[i])
+    }, numeric(1L))
+  tot_prob$prob_mult <- #p(multiple same-side rolls)
+    vapply(1:length(tot_poss), function(i) {
+      poss_df <- dice_poss[dice_poss$tot == tot_poss[i],]
+      mean(poss_df$n_eq > 1)
+    }, numeric(1L))
+  
+  if (is.null(tgt_val)) {tot_prob} else {tot_prob[tot_prob$tot == tgt_val,]}
+}
+```
+
+
+__Evaluating Chromatic Orb scenarios (requires the previous two functions)__
+
+```{r eval_chrorb}
+# function to calculate expected damage and # hits of chromatic orb
+# note: tgt_ac have length == spell_level + 1 (if wanting to consider targets w/ diff AC)
+eval_chrorb <- function(spell_level, tgt_ac, spell_atk_mod, roll_type = "str") {
+  library(dplyr)
+  if (!(roll_type %in% c("str", "adv", "dis"))) {
+    stop("roll_typ must be one of str, adv, dis")
+  }
+  if (!(spell_level %in% 1:9)) {stop("spell_level must be an integer between 1 and 9")}
+  
+  n_d8.0 <- 2
+  n_d8 <- n_d8.0 + spell_level
+  n_tgt <- length(tgt_ac)
+  
+  if (n_tgt > spell_level + 1){
+    stop("tgt_ac must be either length 1 or length spell_level + 1")}
+  
+  # calculate p(damage roll) and p(multiple same-side dice) for lookup
+  # cols tot (roll total = damage), prob_tot (p(tot)), prob_mult (p(multi same-side rolls))
+  dmg_ref <- calc_dice_probs(n_dice = n_d8, n_sides = 8, tgt_val = NULL)
+  
+  # expected (mean) damage per landed attack
+  exp_dmg <- sum(dmg_ref$tot * dmg_ref$prob_tot)
+  
+  # probability of 'bounce' to next target (based only on damage roll)
+  prob_bounce <- sum(dmg_ref$prob_tot * dmg_ref$prob_mult)
+  
+  hit_goal <- tgt_ac - spell_atk_mod
+  
+  prob_hit <- vapply(1:length(hit_goal), function(i) {
+    # using '1 = automatic miss' rule
+    calc_1d20_prob(roll_type = roll_type, min_goal = max(2, hit_goal[i]))
+  }, numeric(1L))
+  
+  exp_dmg_1 <- exp_dmg * prob_hit[1]
+  exp_dmg_2plus <- if (n_tgt > 1) {exp_dmg * prob_bounce * prob_hit[-1]} else {0}
+  
+  tot_dmg <- sum(exp_dmg_1, exp_dmg_2plus)
+  
+  list("exp_tot_dmg" = tot_dmg, 
+       "hit_prob" = prob_hit,
+       "prob_bounce_on_hit" = prob_bounce)
+}
+```
+
+# Simulation Scenarios
+
+## Probability of a 'Bounce' by Spell Level
+
+(ACCOUNT FOR HIT PROB OR JUST BASED ON DAMAGE DIE...OR BOTH?)
+
+## Expected Damage for Varying Enemy AC
+
+To keep the simulation runtime reasonable, let's hold a few parameters fixed:
+
+```{r exp-dmg-sim}
+eval_chrorb(spell_level = 2, tgt_ac = c(15, 12), spell_atk_mod = 7, roll_type = "str")
+
+eval_chrorb_df_scenarios <- 
+  expand.grid(
+    spell_level = 1:2,
+    ac1 = 10:20,
+    ac2 = 10:20,
+    spell_atk_mod = 7,
+    roll_w = c("dis", "str", "adv")
+  )
+
+eval_chrorb_df_scenarios$exp_dmg <- 
+  vapply(1:nrow(eval_chrorb_df_scenarios), function(i) {
+    eval_chrorb(
+      spell_level = eval_chrorb_df_scenarios$spell_level[i], 
+      tgt_ac = unlist(eval_chrorb_df_scenarios[i, c("ac1", "ac2")]), 
+      spell_atk_mod = eval_chrorb_df_scenarios$spell_atk_mod[i], 
+      roll_type = eval_chrorb_df_scenarios$roll_w[i]
+      )$exp_tot_dmg
+  }, numeric(1L))
+```
+
