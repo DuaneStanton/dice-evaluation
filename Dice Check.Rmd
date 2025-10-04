@@ -142,7 +142,7 @@ roll <- function(counts, sides, seed = NULL, drop.lowest.n = NULL) {
 
 - 'grey': Chessex 'speckled granite' 7-die set (CHX 25320); white 'core' composition with extensive darker grey flecks and some lighter grey flecks, and 'blood-red' numbering  
     - urea  
-    - _retired from use due to the mottled grey/dark red color scheme being hard to read unless under very bright light; re-inking while trying to keep reddish numbering didn't help_  
+    - _given away due to the mottled grey/dark red color scheme being hard to read unless under very bright light; re-inking while trying to keep reddish numbering didn't help_  
 
 - 'black': Chessex 'speckled urban camo' 7-die set (CHX 25328); dark grey 'core' composition with extensive black flecks and yellow numbering  
     - urea  
@@ -194,12 +194,15 @@ roll <- function(counts, sides, seed = NULL, drop.lowest.n = NULL) {
     
 - 'mini': Die Hard Dice 'critlings' miniature 7-die set; clear with black ink
     - acrylic
+    
+- 'liquid': unknown manufacturer; liquid-core d20 with smoky blue transparent exterior and white/silver-blue glitter suspended interior with silver ink
+    - unknown material - possibly resin with liquid core
 
 # Rolling Surface  
 
 - Initial rolls (white, grey, black, most green rolls):  FanRoll velvet dice tray with leather backing ('rainbow watercolor'); 10" x 10" dimensions, moderate padding  
 
-- Later rolls (rest of green, teal[1/2], mushroom, aubergine, ocean, ice, infernal, blue, jade, expanse, light rainbow, opal\*, Roy G. Biv, Honey, mini rolls): GameGenic Tokens' Lair magnetic dice tray; 6.5" x 3.75" dimensions, less padding  
+- Later rolls (rest of green, teal[1/2], mushroom, aubergine, ocean, ice, infernal, blue, jade, expanse, light rainbow, opal\*, Roy G. Biv, Honey, mini, liquid rolls): GameGenic Tokens' Lair magnetic dice tray; 6.5" x 3.75" dimensions, less padding  
 
   - Starting with the 'ice' dice, a layer of cork was added to the tray to provide better cushioning for the sharp-edge dice  
   
@@ -208,7 +211,7 @@ roll <- function(counts, sides, seed = NULL, drop.lowest.n = NULL) {
 # Power Analysis to Determine Sample Size to Vet Dice
 
 ```{r pwr-analysis}
-sets <- c("white", "grey", "black", "green", "teal1", "teal2", "mushroom", "aubergine", "ocean", "ice", "infernal", "blue", "jade", "expanse", "lt.rainbow", "opal", "rgb", "honey", "mini")  
+sets <- c("white", "grey", "black", "green", "teal1", "teal2", "mushroom", "aubergine", "ocean", "ice", "infernal", "blue", "jade", "expanse", "lt.rainbow", "opal", "rgb", "honey", "mini", "liquid")  
 dice <- paste0("d", c(4, 6, 8, 10, "%", 12, 20))
 alpha <- 0.05 # P(reject null[fair die] | actually fair die)
 pwr <- 0.80 # P(don't reject null | alt [stated bias exists] is true)
@@ -227,7 +230,7 @@ dice_setup <-
     die = rep(dice, times = length(sets))
     ) %>% 
   # only d20 for teal1/teal2/mushroom 'set's
-  filter(!((grepl("teal", set) | grepl("mushroom", set)) & 
+  filter(!(grepl("teal|mushroom|liquid", set) & 
            die %in% paste0("d", c(4, 6, 8, 10, "%", 12)))) %>% 
   # add a row for the stylized 'expanse' d6
   bind_rows(
@@ -327,7 +330,8 @@ set_fill_map <-
     "ocean" = "cyan2", "ice" = "powderblue", "infernal" = "red3", 
     "blue" = "blue", "jade" = "seagreen", "expanse" = "#07054B", 
     "lt.rainbow" = "greenyellow", "opal" = "lightcyan2",
-    "rgb" = "darkviolet", "honey" = "khaki2", "mini" = "coral") 
+    "rgb" = "darkviolet", "honey" = "khaki2", "mini" = "coral",
+    "liquid" = "steelblue")
 ```
 
 
@@ -6832,7 +6836,88 @@ mini_d20_df <- # want: 1851 rolls
     set = sets[19],
     die = dice[7],
     result = c( # 19 per full row
-     0
+     20, 12,  3, 19, 18, 20, 18, 18, 19, 17, 18,  7, 19,  3,  7, 20,  2,  2, 17, 
+     10,  5, 14,  1, 19,  4,  6, 15, 20, 14, 14,  1, 12,  1,  1, 11, 13,  5, 13, 
+     15,  4,  2,  3, 20,  2,  9, 10,  3,  4, 11,  4,  7, 13, 14, 18, 12, 15, 16,
+     19,  6,  1,  9, 14, 12, 12, 18,  7,  2,  3, 17, 11, 10, 14,  9, 12, 12, 20, 
+     14,  7,  3,  8, 18, 19,  9,  9, 20, 11, 10,  6, 14, 10,  2, 19,  1,  7,  9,
+     
+     14, 20,  5, 19, 18, 10,  2,  6,  7,  4,  6,  6, 12, 20, 13, 13, 14, 19, 15, 
+      9,  5,  2,  5,  1,  4,  1,  4, 10, 11,  9,  2, 17,  5, 19,  4,  6, 15,  8, 
+     11, 11, 20,  7,  9,  2, 13, 14, 11,  2,  3, 19,  6, 17, 19,  6, 10,  3, 12,
+      7,  5,  1, 19,  7, 11,  8, 13,  5, 13, 18, 14,  6, 20, 16, 20, 20, 16,  7,
+     18,  4, 18,  2, 10,  8,  3, 19,  9,  3, 17, 14, 15,  4, 15, 19, 20,  7,  1,
+     
+     17, 11,  2,  9, 18, 19, 10, 17, 14,  8,  8, 16,  9, 19,  8,  2, 10,  8,  6,
+      8,  3,  1, 14, 12,  8,  3, 11, 18,  9, 17,  2,  3,  6, 14,  3,  3, 14, 13,
+     11,  3,  4,  4, 10,  3, 15,  7,  3, 11, 17, 12,  1, 20, 15,  6,  4,  6,  8,
+     11,  7, 10,  2,  4,  6, 13, 20, 20, 18, 10, 16,  8, 14, 12,  8, 18,  8,  5,
+     15,  4,  3, 12, 18, 19,  1,  8, 15,  7,  8, 14, 18, 18, 15, 14, 13, 10, 13,
+     
+      9,  2,  5, 13,  3, 18, 15,  4, 10,  8, 11, 19,  8, 11, 11,  3, 13,  3, 11,
+     11,  5,  8,  3,  1, 19, 19, 17,  1, 10,  7,  8, 19, 13, 15,  8, 14, 19, 16,
+     14,  5,  8,  2,  4, 13, 17,  5,  2, 17,  9,  3,  9,  2, 17,  5, 16, 16,  1,
+      9,  1, 12,  4, 15, 10,  4, 15, 15, 12, 13,  3, 13, 13, 19,  5,  3,  4,  7,
+     19,  3, 14, 20,  4, 18, 15,  6,  9,  3, 12, 18,  2,  2,  9, 18, 14,  2,  4,
+     
+      9, 15, 13, 18, 12,  5, 20, 11, 18,  3,  9,  3, 12,  1,  5,  2, 20,  2,  6,
+     17, 19, 11, 15, 14, 15, 20,  6, 18,  6, 15,  1, 11,  8, 19, 16,  3, 15, 11,
+     15, 14,  7, 18, 18, 19, 18, 18, 20,  5, 12,  8,  8, 12,  4,  7, 20,  7, 13,
+      3,  1,  5, 17, 14, 16, 15,  5, 20,  5,  3, 14, 12,  2,  2, 11,  3, 16, 11,
+      8, 15,  7, 18,  3,  7,  2,  8, 12, 13, 19, 15,  3,  6,  4, 10,  6,  7, 17,
+     
+      7, 13,  2, 17,  9,  8,  8, 10, 18, 12,  5,  5, 16, 19,  6, 10,  6,  4,  5, 
+      6, 14, 14,  9, 15,  1,  4,  5,  3,  2,  8, 10, 12, 12,  5,  8, 14, 12, 16,
+      7,  1,  9, 11,  3,  6, 16,  6, 18,  9, 12, 15, 14, 11,  3, 10, 15, 16, 17,
+     20,  1, 14, 12, 15, 10, 17,  9, 19, 19,  3, 20,  1,  9,  7, 14, 17, 19, 19, 
+      9,  9, 11,  8, 13, 20, 12,  8, 19,  7, 18, 16,  7, 19,  8,  3, 12, 12, 19,
+     
+     14, 10,  9, 16,  9, 11, 14, 15,  7, 20, 12,  9, 13, 12,  3, 10,  9,  6, 11, 
+      2,  5,  6,  8, 16,  9, 17, 20, 12, 12,  2, 10,  8, 14,  6, 13,  8,  9, 13,
+      4,  7, 10, 16,  1, 11, 12, 16, 17,  9,  4, 18, 10,  7,  9, 20,  5, 16, 15,
+     10,  9, 10,  2, 16,  4,  4,  4,  2, 18,  9, 10, 12, 12, 20,  8, 12, 13,  1,
+     19, 18, 11,  1, 20,  3, 20, 13,  2, 10,  6, 19, 19, 15, 13,  2, 20,  7,  8,
+     
+     15, 13, 10,  4,  6,  9, 15, 17,  1,  5, 18,  7, 19,  8, 17,  9, 15,  6, 11, 
+      5, 12, 18,  7, 14, 12,  8, 20,  6, 10, 12,  5,  8, 14,  9, 12,  8, 11, 13,
+     11,  1, 15, 10,  8, 10,  8,  2,  2,  5,  2,  6, 17,  8,  8, 14, 14,  3,  9,
+     11,  2, 20, 17, 16, 13, 17,  8, 20,  1,  1, 17, 18,  2, 11,  5,  9, 17, 16,
+      4, 16,  7, 20,  2, 13,  7, 18, 13, 19, 20,  4,  4, 12,  9,  8,  5,  3, 19,
+     
+      8, 10,  2, 19, 16, 12, 12, 19,  6,  2, 18,  7, 13, 11,  8,  7,  1, 12, 11,
+     19,  2,  3, 16, 10,  3, 16, 14,  4, 10,  3, 12, 10, 20,  1,  4, 18, 10, 20, 
+     19, 10, 13, 20, 12, 10, 14,  4, 18, 15, 19, 14,  9, 11,  5,  3, 18, 16, 10,
+     19,  8,  3, 19, 14,  5, 15, 19, 17,  9,  3, 14, 13, 11, 20,  6, 11,  6, 19, 
+     16, 17, 13,  8, 16, 20,  7, 20,  9, 19,  5, 16, 17,  7,  9,  9, 13, 11,  9,
+     
+      5,  2, 15,  5,  8, 13, 17, 11,  3,  2, 11, 19, 10, 12, 14,  2, 12,  2, 14,
+     16,  6,  3,  3,  4,  3,  9, 15, 15, 19, 17,  6,  1, 14, 13, 10,  2,  3,  5,
+      3,  7,  1, 10,  7, 18, 14,  9,  8, 10,  6, 13, 18, 19,  6, 10, 12,  9,  3,
+      7, 18,  3,  2,  3,  3, 20,  3,  9, 11, 17,  2, 14, 18,  3, 12, 15, 11,  3,
+      1, 10,  7,  5, 20,  9,  3,  4,  3, 18,  1, 20, 13,  3, 13, 11, 15, 18,  3,
+     
+      6, 14, 12,  5,  8, 14, 20,  1,  2,  6, 11,  7,  1, 10, 13,  3,  3,  8, 12,
+     19,  3, 18, 17, 11,  2, 17,  8,  5, 15,  5,  8,  6,  1,  9,  4,  9,  2,  9,
+     11, 12, 15,  2,  9, 12,  7, 12,  5,  9, 10, 20, 17, 20, 20, 19,  7, 13,  2,
+      8,  9, 14,  7, 12,  6, 15,  8,  3, 18, 14,  2, 18, 15, 19,  8, 13, 20,  1,
+      6,  1, 16,  2,  5,  4, 18, 12, 18,  1,  8, 20, 15, 13,  4, 15,  4, 17, 11,
+     
+      5, 20, 19, 17,  3, 19,  8, 20, 19,  8,  5,  8, 16, 13,  4, 11, 19, 20, 12,
+      9,  8,  2, 11, 18, 18,  9, 10, 18,  3,  2,  9,  7, 16, 14, 17,  6, 10,  7,
+      6, 15, 10,  7, 15,  5, 19, 19, 19,  6,  1, 18, 17, 12, 16,  4, 10, 16,  6,
+     15,  9, 18, 20, 14,  3, 12, 14,  1, 12, 11, 13,  6,  9,  4,  2, 14,  4, 11,
+      2, 12, 13, 15,  8, 16, 18, 12,  3, 20,  4,  5,  4,  2, 20,  7,  9,  2, 18,
+     
+      3,  6, 10, 14, 11, 15,  2, 10, 16, 18,  3,  2, 19,  2,  6,  2,  6, 13,  6,
+     20,  8, 10, 14, 13,  3, 11,  8,  2,  5, 16, 10, 16,  6,  9,  2, 11, 19,  9,
+     10,  1, 16, 10, 13, 15, 15,  6,  2,  1, 13, 19, 20, 14, 10,  3,  4, 16,  2,
+     15,  5,  8,  6, 15,  3, 12, 11, 10,  7,  2,  6,  1,  1, 16, 18, 10, 16, 12,
+     11, 11, 18,  6, 18, 16,  3, 12, 15, 15, 20, 11, 13, 19, 15, 13, 16, 14,  1,
+     
+      3, 11, 20,  5,  2, 10,  1, 13,  3,  7, 12, 12,  3, 15, 12, 12, 13,  7,  4,
+     12,  1, 10,  8, 18,  4, 17, 16, 19, 19,  3,  6, 12,  3,  9, 11, 11,  7, 16,
+     12,  8,  1, 17, 14,  4,  1,  3, 10, 11,  1, 11,  6, 11,  5, 11, 13, 19,  9,
+      9,  2,  2,  2, 15, 10,  7, 15, 11, 20 # RESUME HERE
     )
   ) %>% 
   mutate(obs = 1:nrow(.))
@@ -6840,6 +6925,31 @@ mini_d20_df <- # want: 1851 rolls
 plot_result(mini_d20_df, set_fill_map["mini"])
 ```
 
+
+
+
+
+### Liquid d20
+
+```{r liquid-d20, echo = FALSE, eval = TRUE}
+# rows of 19 single-digit results to enter
+#dice_setup[dice_setup$set == sets[20] & dice_setup$die == dice[7], "sample_size"] / 19
+
+liquid_d20_df <- # want: 1851 rolls
+  data.frame(
+    set = sets[20],
+    die = dice[7],
+    result = c( # 19 per full row
+     10, 16, 17,  5,  3, 13, 11,  4,  1, 11,  4, 13,  5, 19,  3, 18, 19,  6,  2,
+      8,  4, 16,  8, 15,  1, 10,  7, 11, 19, 11,  4,  8, 18,  5, 11,  9, 16, 14,
+      5,  3,  1, 14, 18,  9, 15, 20, 13, 10, 12, 11, 18, 16, 19,  4, 11,  4,  6,
+      3, ### RESUME HERE
+    )
+  ) %>% 
+  mutate(obs = 1:nrow(.))
+
+plot_result(liquid_d20_df, set_fill_map["liquid"])
+```
 
 
 # Aggregated Analyses
@@ -6880,7 +6990,8 @@ dice_roll_data <-
                honey_d4_df, honey_d6_df, honey_d8_df, honey_d10_df,
                `honey_d%_df`, honey_d12_df, honey_d20_df,
                mini_d4_df, mini_d6_df, mini_d8_df, mini_d10_df,
-               `mini_d%_df`, mini_d12_df, mini_d20_df
+               `mini_d%_df`, mini_d12_df, mini_d20_df,
+               liquid_d20_df
                ))
 
 write.csv(x = dice_roll_data, row.names = FALSE,
@@ -7185,7 +7296,7 @@ streak_sim_plot <-
   theme_bw()
 
 dice_streak_focus <- c(7, 14, 21, 28, 29, 30, 31, 38, 40, 45, 52, 59,
-                       63, 66, 68, 73, 81, 88, 95) #102 109 116
+                       63, 66, 68, 73, 81, 88, 95) #102 109 116, 117
 
 focused_streak_plots <- 
   lapply(seq_along(dice_streak_focus), function(i){
@@ -7221,7 +7332,7 @@ for (i in seq_along(focused_streak_plots)) {
 comparison_plots_df <- 
   dice_roll_df_ %>%
   filter(chisq_stat_sig_0.05 |
-         (set %in% c("aubergine", "infernal", "opal") & die == "d20")) %>% 
+         (set %in% c("aubergine", "infernal", "opal", "rgb") & die == "d20")) %>% 
   nest_by(die)
 
 set_color_map <- 
@@ -7233,7 +7344,8 @@ set_color_map <-
     "infernal" = NA_character_, "blue" = NA_character_,
     "jade" = NA_character_, "expanse" = NA_character_,
     "lt.rainbow" = "navy", "opal" = "gold",
-    "rgb" = NA_character_, "honey" = NA_character_, "mini" = NA_character_)
+    "rgb" = NA_character_, "honey" = NA_character_, "mini" = NA_character_,
+    "liquid" = NA_character_)
 
 comparison_plots <- 
   lapply(1:nrow(comparison_plots_df), function(i) {
@@ -7391,7 +7503,7 @@ set_d20_ranks <-
   arrange(desc(X50.)) |> 
   pull(set)
 
-
+# "rgb" = "rgb", "honey" = "hny", "mini" = "mni", "liquid" = "lqd"
 set_d20_ranks_abbrevmap <- 
   c("infernal" = "inf",
     "aubergine" = "aub",
@@ -7410,8 +7522,6 @@ set_d20_ranks_abbrevmap <-
     "white" = "wht",
     "green" = "grn" 
     )
-
-#"rgb" = "rgb", "honey" = "hny", "mini" = "min"
 
 d20_sample_sim_df |> 
   mutate(set = factor(set, levels = set_d20_ranks)) |> 
@@ -7489,7 +7599,8 @@ set_lntyp_map <-
     "ocean" = "solid", "ice" = "solid", 
     "infernal" = "dashed", "blue" = "solid",
     "jade" = "solid", "expanse" = "solid",
-    "lt.rainbow" = "solid", "opal" = "twodash")
+    "lt.rainbow" = "solid", "opal" = "twodash",
+    "mini" = "solid", "liquid" = "solid")
    
 d20_bayesian_pcts_plot_top5 <- 
   d20_bayesian_pcts_df |> 
